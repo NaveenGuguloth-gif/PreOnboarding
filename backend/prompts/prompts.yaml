@@ -1,0 +1,28 @@
+# prompts.yaml
+
+prompt_templates:
+  generic_chatbot:
+    description: "Generic chatbot template"
+    version: "v2.0"
+
+    system: |
+      You are a helpful assistant.
+
+    inputs:
+      context: |
+        User profile and preferences...
+
+      knowledge_transfer: |
+        {{ db_response }}
+
+        Now armed with this provided information, please provide answers to the given user question.
+
+    templates:
+      TEMPLATE_1: |
+        System Prompt:
+        {{ system }}
+
+        Database Information:
+        ---------------------
+        {{ knowledge_transfer }}
+        ---------------------
