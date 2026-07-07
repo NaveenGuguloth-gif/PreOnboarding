@@ -6,9 +6,14 @@ import LoadingSpinner from "../../components/common/LoadingSpinner";
 // Category accents, reused across the finder pills, insight rows,
 // and resource card borders so the whole page shares one color language.
 const CATEGORY_THEME = {
+  "nearby pgs": { accent: "#7C3AED", soft: "bg-violet-500/10", text: "text-violet-300" },
+  flats: { accent: "#2563EB", soft: "bg-blue-500/10", text: "text-blue-300" },
+  hotels: { accent: "#DB2777", soft: "bg-pink-500/10", text: "text-pink-300" },
   apartments: { accent: "#8B5CF6", soft: "bg-violet-500/10", text: "text-violet-300" },
   "nearby hospitals": { accent: "#EF4444", soft: "bg-rose-500/10", text: "text-rose-300" },
   "nearby gyms": { accent: "#A3E635", soft: "bg-lime-500/10", text: "text-lime-300" },
+  schools: { accent: "#F59E0B", soft: "bg-amber-500/10", text: "text-amber-300" },
+  "shopping malls": { accent: "#EC4899", soft: "bg-pink-500/10", text: "text-pink-300" },
   "daily essentials": { accent: "#F97316", soft: "bg-orange-500/10", text: "text-orange-300" },
   accommodation: { accent: "#8B5CF6", soft: "bg-violet-500/10", text: "text-violet-300" },
   housing: { accent: "#8B5CF6", soft: "bg-violet-500/10", text: "text-violet-300" },
@@ -26,6 +31,18 @@ const CATEGORY_THEME = {
 const themeFor = (category) => CATEGORY_THEME[(category || "").toLowerCase()] || CATEGORY_THEME.default;
 
 const CATEGORY_META = {
+  "nearby pgs": {
+    symbol: "PG",
+    image: "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=900&q=80",
+  },
+  flats: {
+    symbol: "F",
+    image: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=900&q=80",
+  },
+  hotels: {
+    symbol: "H",
+    image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=900&q=80",
+  },
   apartments: {
     symbol: "⌂",
     image: "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=900&q=80",
@@ -42,6 +59,14 @@ const CATEGORY_META = {
     symbol: "◼",
     image: "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=900&q=80",
   },
+  schools: {
+    symbol: "S",
+    image: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=900&q=80",
+  },
+  "shopping malls": {
+    symbol: "M",
+    image: "https://images.unsplash.com/photo-1519567241046-7f570eee3ce6?auto=format&fit=crop&w=900&q=80",
+  },
   transport: {
     symbol: "→",
     image: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80",
@@ -55,7 +80,16 @@ const CATEGORY_META = {
 function normalizeRelocationCategory(category = "", title = "") {
   const value = `${category} ${title}`.toLowerCase();
 
-  if (value.includes("apartment") || value.includes("pg") || value.includes("hostel") || value.includes("hotel") || value.includes("stay") || value.includes("housing") || value.includes("accommodation")) {
+  if (value.includes("pg") || value.includes("paying guest") || value.includes("hostel")) {
+    return "Nearby PGs";
+  }
+  if (value.includes("flat") || value.includes("apartment") || value.includes("housing")) {
+    return "Flats";
+  }
+  if (value.includes("hotel") || value.includes("short-stay") || value.includes("guest house")) {
+    return "Hotels";
+  }
+  if (value.includes("accommodation") || value.includes("stay")) {
     return "Apartments";
   }
   if (value.includes("hospital") || value.includes("clinic") || value.includes("health")) {
@@ -66,6 +100,12 @@ function normalizeRelocationCategory(category = "", title = "") {
   }
   if (value.includes("grocery") || value.includes("pharmacy") || value.includes("essential") || value.includes("store") || value.includes("market")) {
     return "Daily Essentials";
+  }
+  if (value.includes("school") || value.includes("education")) {
+    return "Schools";
+  }
+  if (value.includes("mall") || value.includes("shopping")) {
+    return "Shopping Malls";
   }
   if (value.includes("transport") || value.includes("station") || value.includes("bus") || value.includes("metro") || value.includes("commute") || value.includes("shuttle")) {
     return "Transport";
@@ -105,13 +145,40 @@ const generatedResourcesFor = (location) => {
   const area = location?.trim() || "your preferred area";
   return [
     {
-      id: "stay-apartment-search",
-      category: "Accommodation",
-      title: `Apartments and PGs near ${area}`,
-      description: "Shortlist furnished apartments, PG stays, and shared flats for the first month.",
-      address: `${area} residential area`,
-      contact: "Ask HR travel desk for verified brokers",
-      distance_km: 1.5,
+      id: "relocation-pg-search",
+      category: "Nearby PGs",
+      title: `Verified PG options near ${area}`,
+      description: "Budget-friendly paying guest stays for the first month with meals and laundry options.",
+      address: `${area} residential cluster`,
+      contact: "+91 20 4100 2231",
+      distance_km: 1.2,
+      plant_distance_km: 3.4,
+      monthly_cost: "₹8,000-₹14,000/month",
+      commute_time: "15-25 min to plant",
+    },
+    {
+      id: "relocation-flat-search",
+      category: "Flats",
+      title: `1BHK and shared flats near ${area}`,
+      description: "Rental flats suitable for longer stays after temporary accommodation is finalized.",
+      address: `${area} apartment belt`,
+      contact: "+91 20 4100 2242",
+      distance_km: 1.8,
+      plant_distance_km: 4.1,
+      monthly_cost: "₹16,000-₹28,000/month",
+      commute_time: "20-35 min to plant",
+    },
+    {
+      id: "relocation-hotel-search",
+      category: "Hotels",
+      title: `Short-stay hotels near ${area}`,
+      description: "Hotels for arrival week, document visits, late reporting slots, or family travel.",
+      address: `${area} main road`,
+      contact: "+91 20 4100 2255",
+      distance_km: 2.0,
+      plant_distance_km: 4.8,
+      monthly_cost: "₹1,800-₹4,500/night",
+      commute_time: "20-40 min to plant",
     },
     {
       id: "stay-hospital-search",
@@ -119,8 +186,11 @@ const generatedResourcesFor = (location) => {
       title: `Hospitals and clinics near ${area}`,
       description: "Keep nearby emergency care, pharmacy, and general physician contacts saved.",
       address: `${area} main road`,
-      contact: "Local emergency desk / nearby clinic",
+      contact: "+91 20 4100 2290",
       distance_km: 2.1,
+      plant_distance_km: 3.8,
+      monthly_cost: "Consultation ₹500-₹1,200",
+      commute_time: "15-30 min to plant",
     },
     {
       id: "stay-gym-search",
@@ -128,8 +198,35 @@ const generatedResourcesFor = (location) => {
       title: `Gyms and fitness centers near ${area}`,
       description: "Look for monthly memberships, early-morning access, and locker facilities.",
       address: `${area} market cluster`,
-      contact: "Visit shortlisted gyms before paying",
+      contact: "+91 20 4100 2266",
       distance_km: 1.2,
+      plant_distance_km: 3.2,
+      monthly_cost: "₹1,200-₹2,500/month",
+      commute_time: "10-25 min to plant",
+    },
+    {
+      id: "stay-school-search",
+      category: "Schools",
+      title: `Schools near ${area}`,
+      description: "Useful for employees relocating with family and planning school access.",
+      address: `${area} education corridor`,
+      contact: "+91 20 4100 2277",
+      distance_km: 2.8,
+      plant_distance_km: 5.6,
+      monthly_cost: "Fees vary by school",
+      commute_time: "25-45 min to plant",
+    },
+    {
+      id: "stay-mall-search",
+      category: "Shopping Malls",
+      title: `Shopping malls near ${area}`,
+      description: "Weekend shopping, household setup, food courts, electronics, and daily purchases.",
+      address: `${area} retail zone`,
+      contact: "+91 20 4100 2288",
+      distance_km: 3.1,
+      plant_distance_km: 6.2,
+      monthly_cost: "Lifestyle spend varies",
+      commute_time: "25-45 min to plant",
     },
     {
       id: "stay-essentials-search",
@@ -139,6 +236,9 @@ const generatedResourcesFor = (location) => {
       address: `${area} local market`,
       contact: "Save two delivery and pharmacy options",
       distance_km: 0.8,
+      plant_distance_km: 3.0,
+      monthly_cost: "₹6,000-₹12,000/month basics",
+      commute_time: "10-20 min to plant",
     },
     {
       id: "stay-commute-search",
@@ -148,6 +248,9 @@ const generatedResourcesFor = (location) => {
       address: `${area} commute corridor`,
       contact: "transport.support@tatamotors.com",
       distance_km: 3.2,
+      plant_distance_km: 3.2,
+      monthly_cost: "₹1,500-₹5,000/month commute",
+      commute_time: "15-40 min to plant",
     },
   ];
 };
@@ -223,12 +326,12 @@ export default function Relocation() {
   }
 
   return (
-    <div className="max-w-6xl space-y-5">
-      <div className="relative overflow-hidden rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:flex sm:items-end sm:justify-between">
+    <div className="w-full space-y-5">
+      <div className="relative overflow-hidden rounded-2xl border border-gray-800 bg-gray-900 p-5 sm:flex sm:items-end sm:justify-between sm:p-6">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Local support</p>
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Relocation Support</h2>
-          <p className="mt-1 text-sm text-gray-400">Search a location and see nearby apartments, hospitals, gyms, transport, and essentials.</p>
+          <p className="mt-1 text-sm text-gray-400">Search a location and compare PGs, flats, hotels, gyms, hospitals, schools, malls, transport, costs, contacts, and distance from the Tata Motors plant.</p>
         </div>
         <Badge color="blue">{resources.length} nearby resources</Badge>
       </div>
@@ -268,7 +371,7 @@ function SmartRelocationFinder({ aiLoading, aiSource, location, onSearch, reloca
         <div>
           <Badge color="blue">Smart finder</Badge>
           <h3 className="mt-3 text-xl font-semibold text-white">AI relocation search for {stayLocation || location}</h3>
-          <p className="mt-1 text-sm text-gray-400">Enter a location to get relocation options with name, location, contact, and distance.</p>
+          <p className="mt-1 text-sm text-gray-400">Enter a location to get nearby options with cost of living, contacts, commute time, and distance from the Tata Motors plant.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {aiLoading ? <Badge color="yellow">AI searching</Badge> : null}
@@ -303,30 +406,30 @@ function RelocationCategorySection({ groupName, items }) {
 
   return (
     <section className="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
-      <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
-        <div className="relative min-h-48 overflow-hidden border-b border-gray-800 lg:border-b-0 lg:border-r">
+      <div className="grid gap-0 lg:grid-cols-[minmax(180px,220px)_1fr]">
+        <div className="relative min-h-36 overflow-hidden border-b border-gray-800 sm:min-h-40 lg:border-b-0 lg:border-r">
           <img
             alt={`${groupName} preview`}
             className="absolute inset-0 h-full w-full object-cover"
             src={meta.image}
           />
           <div className="absolute inset-0 bg-gray-950/65" />
-          <div className="relative flex h-full min-h-48 flex-col justify-between p-5">
+          <div className="relative flex h-full min-h-36 flex-col justify-between p-4 sm:min-h-40">
             <span
-              className="grid h-12 w-12 place-items-center rounded-lg text-2xl"
+              className="grid h-10 w-10 place-items-center rounded-lg text-xl"
               style={{ backgroundColor: `${theme.accent}24`, color: theme.accent }}
             >
               {meta.symbol}
             </span>
             <div>
               <p className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>Nearby category</p>
-              <h3 className="mt-1 text-2xl font-semibold text-white">{groupName}</h3>
-              <p className="mt-2 text-sm text-gray-300">{items.length} options found</p>
+              <h3 className="mt-1 text-xl font-semibold text-white">{groupName}</h3>
+              <p className="mt-1 text-sm text-gray-300">{items.length} options found</p>
             </div>
           </div>
         </div>
 
-        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {items.map((resource) => (
             <RelocationResultCard
               key={resource.id ?? resource.title ?? resource.name}
@@ -344,21 +447,30 @@ function RelocationCategorySection({ groupName, items }) {
 function RelocationResultCard({ resource, symbol, theme }) {
   const title = resource.title ?? resource.name ?? "Not Available";
   const distance = resource.distance ?? (resource.distance_km != null ? `${resource.distance_km} km` : "Not Available");
+  const plantDistance = resource.plant_distance ?? (resource.plant_distance_km != null ? `${resource.plant_distance_km} km` : distance);
+  const cost = resource.monthly_cost ?? resource.cost ?? resource.rent ?? "Not Available";
+  const commute = resource.commute_time ?? resource.travel_time ?? "Not Available";
 
   return (
-    <article className="flex min-h-52 flex-col rounded-lg border border-gray-800 bg-gray-950/70 p-4 transition hover:border-gray-700">
+    <article className="flex min-h-56 flex-col rounded-lg border border-gray-800 bg-gray-950/70 p-3.5 transition hover:border-gray-700">
       <div className="flex items-start justify-between gap-3">
         <span
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-xl"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg"
           style={{ backgroundColor: `${theme.accent}1F`, color: theme.accent }}
         >
           {symbol}
         </span>
         <span className="rounded-full border border-gray-800 px-2.5 py-1 text-xs text-gray-400">{distance}</span>
       </div>
-      <strong className="mt-4 line-clamp-2 text-base font-semibold text-white">{title}</strong>
-      {resource.description ? <p className="mt-2 line-clamp-2 text-sm leading-5 text-gray-400">{resource.description}</p> : null}
-      <div className="mt-auto space-y-2 pt-4 text-sm text-gray-400">
+      <strong className="mt-3 line-clamp-2 text-sm font-semibold text-white">{title}</strong>
+      {resource.description ? <p className="mt-1.5 line-clamp-2 text-sm leading-5 text-gray-400">{resource.description}</p> : null}
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+        <IntelPill label="Plant distance" value={plantDistance} />
+        <IntelPill label="Cost" value={cost} />
+        <IntelPill label="Commute" value={commute} />
+        <IntelPill label="Nearby" value={distance} />
+      </div>
+      <div className="mt-auto space-y-1.5 pt-3 text-sm text-gray-400">
         <p className="line-clamp-2">
           <span className="text-gray-500">Area: </span>
           {resource.address || "Not Available"}
@@ -369,6 +481,15 @@ function RelocationResultCard({ resource, symbol, theme }) {
         </p>
       </div>
     </article>
+  );
+}
+
+function IntelPill({ label, value }) {
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-900/60 px-2.5 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-0.5 line-clamp-1 text-xs font-semibold text-white">{value}</p>
+    </div>
   );
 }
 

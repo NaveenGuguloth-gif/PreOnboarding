@@ -39,6 +39,35 @@ def _public(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return doc
 
 
+def _sync_candidate_metrics(candidate_id: str, last_activity: str = ""):
+    if not candidate_id or candidate_id == "demo":
+        return
+    try:
+        documents = documents_for_candidate(candidate_id)
+        modules = learning_modules_for_employee(candidate_id)
+        candidate = hr_repository.get_candidate(candidate_id) or {}
+        document_completion = round(
+            (sum(1 for doc in documents if doc.get("status") != "missing") / len(documents)) * 100
+        ) if documents else 0
+        learning_progress = round(
+            sum(module.get("progress", 0) for module in modules) / len(modules)
+        ) if modules else 0
+        profile_completion = max(0, min(100, int(candidate.get("profile_completion", 0) or 0)))
+        readiness_score = round((profile_completion + document_completion + learning_progress) / 3)
+        update = {
+            "document_completion": document_completion,
+            "learning_progress": learning_progress,
+            "learning_completion": learning_progress,
+            "readiness_score": readiness_score,
+            "hr_status": "Completed" if readiness_score >= 100 else "In Progress",
+        }
+        if last_activity:
+            update["last_activity"] = last_activity
+        hr_repository.update_candidate(candidate_id, update)
+    except Exception:
+        pass
+
+
 def _save_upload(file: UploadFile, folder: str) -> Dict[str, str]:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     target_dir = UPLOAD_DIR / folder
@@ -253,6 +282,7 @@ def update_learning_progress(candidate_id: str, task_id: str, progress: int) -> 
         upsert=True,
     )
     audit(candidate_id, "update_progress", "learning", task_id, {"progress": progress})
+    _sync_candidate_metrics(candidate_id, "Learning progress updated")
     return doc
 
 
@@ -337,7 +367,27 @@ def upload_candidate_document(candidate_id: str, requirement_id: str, file: Uplo
     )
     create_notification(candidate_id, "Document uploaded", f"{upload['file_name']} was uploaded for review.")
     audit(candidate_id, "upload", "document", requirement_id, upload)
+    _sync_candidate_metrics(candidate_id, f"Uploaded {upload['file_name']}")
     return _public(doc)
+
+
+def remove_candidate_document(candidate_id: str, requirement_id: str) -> bool:
+    submissions = _collection("pre_onboarding_document_submissions")
+    existing = submissions.find_one({"candidate_id": candidate_id, "requirement_id": requirement_id})
+    if not existing:
+        return False
+
+    file_path = existing.get("file_path")
+    if file_path:
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    result = submissions.delete_one({"candidate_id": candidate_id, "requirement_id": requirement_id})
+    audit(candidate_id, "remove", "document", requirement_id, {"file_name": existing.get("file_name")})
+    _sync_candidate_metrics(candidate_id, "Removed uploaded document")
+    return result.deleted_count > 0
 
 
 def review_candidate_document(candidate_id: str, requirement_id: str, status: str, comments: str = "") -> Optional[Dict[str, Any]]:
@@ -348,6 +398,7 @@ def review_candidate_document(candidate_id: str, requirement_id: str, status: st
     )
     create_notification(candidate_id, f"Document {status}", comments or f"Your document was {status}.")
     audit("system", "review", "document", requirement_id, payload)
+    _sync_candidate_metrics(candidate_id, f"Document {status}")
     return _public(_collection("pre_onboarding_document_submissions").find_one({"candidate_id": candidate_id, "requirement_id": requirement_id}))
 
 

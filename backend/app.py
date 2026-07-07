@@ -554,6 +554,11 @@ class SignupData(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     accountType: Optional[str] = None
+    employeeId: Optional[str] = None
+    designation: Optional[str] = None
+    department: Optional[str] = ""
+    location: Optional[str] = ""
+    joiningDate: Optional[str] = None
 
 class LoginData(BaseModel):
     identifier: str
@@ -628,6 +633,13 @@ def _public_auth_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "role": user.get("role", "employee"),
         "user_type": user.get("role", "employee"),
         "userType": user.get("role", "employee"),
+        "employee_id": user.get("employee_id"),
+        "employeeId": user.get("employee_id"),
+        "department": user.get("department"),
+        "location": user.get("location"),
+        "designation": user.get("designation"),
+        "joining_date": user.get("joining_date"),
+        "joiningDate": user.get("joining_date"),
         "auth_provider": user.get("auth_provider"),
         "authProvider": user.get("auth_provider"),
     }
@@ -811,14 +823,47 @@ def signup(data: SignupData):
         "full_name": full_name,
         "password_hash": hash_password(data.password),
         "role": role,
+        "employee_id": data.employeeId,
+        "designation": data.designation,
+        "department": data.department,
+        "location": data.location,
+        "joining_date": data.joiningDate,
     }
     result = users_collection.insert_one(user_doc)
+    user_id = str(result.inserted_id)
+    if role == "employee":
+        try:
+            hr_repository.create_candidate(
+                {
+                    "id": user_id,
+                    "name": full_name,
+                    "email": data.email,
+                    "employee_id": data.employeeId or f"EMP-{user_id[-6:]}",
+                    "department": data.department or "",
+                    "designation": data.designation or "",
+                    "role": data.designation or "",
+                    "location": data.location or "",
+                    "joining_date": data.joiningDate or datetime.now(timezone.utc).date().isoformat(),
+                    "profile_completion": 0,
+                    "document_completion": 0,
+                    "learning_progress": 0,
+                    "readiness_score": 0,
+                    "current_stage": "Registered",
+                }
+            )
+        except Exception:
+            logger.exception("Failed to create HR candidate row for new signup")
     token = create_access_token(str(result.inserted_id))
     response = JSONResponse({
         "user": {
+            "id": user_id,
             "email": data.email,
             "full_name": full_name,
             "role": role,
+            "employee_id": data.employeeId,
+            "department": data.department,
+            "location": data.location,
+            "joining_date": data.joiningDate,
         }
     })
     response.set_cookie("access_token", token, httponly=True)
@@ -841,13 +886,7 @@ def login(data: LoginData):
         )
 
     token = create_access_token(str(user["_id"]))
-    response = JSONResponse({
-        "user": {
-            "email": user["email"],
-            "full_name": user["full_name"],
-            "role": user["role"],
-        }
-    })
+    response = JSONResponse({"user": _public_auth_user(user)})
     response.set_cookie("access_token", token, httponly=True)
     return response
 
@@ -872,6 +911,87 @@ def logout():
     return response
 
 
+def _current_auth_user(access_token: str = Cookie(None)):
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = decode_access_token(access_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = _find_user_by_id(payload["sub"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+@app.get("/api/candidate/me")
+def get_candidate_me(user: Dict[str, Any] = Depends(_current_auth_user)):
+    return {"user": _public_auth_user(user)}
+
+
+@app.get("/api/candidate/metrics")
+def get_candidate_metrics(user: Dict[str, Any] = Depends(_current_auth_user)):
+    candidate_id = str(user.get("_id") or user.get("id"))
+    try:
+        candidate = hr_repository.get_candidate(candidate_id) or {}
+        documents = preonboarding_repository.documents_for_candidate(candidate_id)
+        modules = preonboarding_repository.learning_modules_for_employee(candidate_id)
+    except RuntimeError as exc:
+        _mongo_unavailable_response(exc)
+
+    document_completion = round(
+        (sum(1 for doc in documents if doc.get("status") != "missing") / len(documents)) * 100
+    ) if documents else 0
+    learning_completion = round(
+        sum(module.get("progress", 0) for module in modules) / len(modules)
+    ) if modules else 0
+    profile_completion = max(0, min(100, int(candidate.get("profile_completion", 0) or 0)))
+    readiness_score = round((profile_completion + document_completion + learning_completion) / 3)
+    joining_date = candidate.get("joining_date") or user.get("joining_date")
+    days_remaining = 0
+    if joining_date:
+        days_remaining = max(0, (datetime.fromisoformat(joining_date).date() - datetime.now(timezone.utc).date()).days)
+    return {
+        "profileCompletion": profile_completion,
+        "documentCompletion": document_completion,
+        "learningCompletion": learning_completion,
+        "readinessScore": readiness_score,
+        "daysRemaining": days_remaining,
+        "teamAssignment": candidate.get("team_assignment"),
+        "welcomeKitAssignment": candidate.get("welcome_kit_assignment", {}),
+    }
+
+
+@app.get("/api/candidate/peers")
+def list_candidate_peers(user: Dict[str, Any] = Depends(_current_auth_user)):
+    current_id = str(user.get("_id") or user.get("id") or "")
+    current_email = str(user.get("email") or "").lower()
+    try:
+        candidates = hr_repository.list_candidates(sort="name", order="asc", page=1, limit=1000)["candidates"]
+    except RuntimeError as exc:
+        _mongo_unavailable_response(exc)
+
+    peers = []
+    for candidate in candidates:
+        candidate_id = str(candidate.get("id") or "")
+        candidate_email = str(candidate.get("email") or "").lower()
+        if candidate_id == current_id or (current_email and candidate_email == current_email):
+            continue
+        peers.append({
+            "id": candidate.get("id"),
+            "name": candidate.get("name"),
+            "email": candidate.get("email"),
+            "employee_id": candidate.get("employee_id"),
+            "department": candidate.get("department"),
+            "role": candidate.get("role") or candidate.get("designation"),
+            "location": candidate.get("location"),
+            "joining_date": candidate.get("joining_date"),
+            "current_stage": candidate.get("current_stage") or candidate.get("status"),
+            "readiness_score": candidate.get("readiness_score", 0),
+        })
+    return {"peers": peers}
+
+
 # -----------------------------
 # HR Candidate Management APIs
 # -----------------------------
@@ -892,8 +1012,9 @@ class CandidateCreateData(BaseModel):
     manager_status: Optional[str] = "Pending"
     learning_progress: Optional[int] = 0
     document_completion: Optional[int] = 0
-    profile_completion: Optional[int] = 70
+    profile_completion: Optional[int] = 0
     readiness_score: Optional[int] = 0
+    welcome_kit_assignment: Optional[Dict[str, Any]] = None
 
 
 class CandidateUpdateData(BaseModel):
@@ -914,6 +1035,8 @@ class CandidateUpdateData(BaseModel):
     readiness_score: Optional[int] = None
     current_stage: Optional[str] = None
     last_activity: Optional[str] = None
+    team_assignment: Optional[Dict[str, Any]] = None
+    welcome_kit_assignment: Optional[Dict[str, Any]] = None
 
 
 def _mongo_unavailable_response(exc: Exception):
@@ -928,7 +1051,9 @@ def _mongo_unavailable_response(exc: Exception):
 def list_hr_candidates(
     search: Optional[str] = Query(None),
     department: Optional[str] = Query(None),
+    location: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    joining_window: Optional[str] = Query(None),
     readiness_min: Optional[int] = Query(None, ge=0, le=100),
     readiness_max: Optional[int] = Query(None, ge=0, le=100),
     sort: str = Query("joining_date"),
@@ -940,7 +1065,9 @@ def list_hr_candidates(
         return hr_repository.list_candidates(
             search=search,
             department=department,
+            location=location,
             status=status,
+            joining_window=joining_window,
             readiness_min=readiness_min,
             readiness_max=readiness_max,
             sort=sort,
@@ -1002,6 +1129,29 @@ def delete_hr_candidate(candidate_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return {"ok": True}
+
+
+REMINDER_MESSAGE = (
+    "Your joining date is coming soon. Please complete your pending onboarding activities, "
+    "including profile details, document upload, learning modules, and readiness tasks before your joining date."
+)
+
+
+@app.post("/api/hr/candidates/{candidate_id}/notify")
+def notify_hr_candidate(candidate_id: str):
+    try:
+        candidate = hr_repository.notify_candidate(candidate_id, REMINDER_MESSAGE)
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        preonboarding_repository.create_notification(
+            candidate_id,
+            "Joining date reminder",
+            REMINDER_MESSAGE,
+            "in_app,email",
+        )
+    except RuntimeError as exc:
+        _mongo_unavailable_response(exc)
+    return {"ok": True, "candidate": candidate}
 
 
 # -----------------------------
@@ -1282,6 +1432,17 @@ def upload_candidate_document(
         return preonboarding_repository.upload_candidate_document(candidate_id, documentId, file)
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
+
+
+@app.delete("/api/documents/{document_id}")
+def remove_candidate_document(document_id: str, candidate_id: str = Query("demo")):
+    try:
+        removed = preonboarding_repository.remove_candidate_document(candidate_id, document_id)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Document upload not found")
+    return {"ok": True}
 
 
 @app.post("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/review")

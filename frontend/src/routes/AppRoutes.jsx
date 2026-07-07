@@ -14,6 +14,7 @@ import Documents       from "../pages/dashboard/Documents";
 import Learning        from "../pages/dashboard/Learning";
 import Assistant       from "../pages/dashboard/Assistant";
 import Relocation      from "../pages/dashboard/Relocation";
+import Notifications   from "../pages/dashboard/Notifications";
 import HrDashboard     from "../pages/hr/HrDashboard";
 import CandidateDetail from "../pages/hr/CandidateDetail";
 import CinematicHero   from "../pages/CinematicHero";
@@ -56,6 +57,7 @@ export default function AppRoutes() {
         <Route path="/dashboard/learning"     element={<Learning />} />
         <Route path="/dashboard/assistant"    element={<Assistant />} />
         <Route path="/dashboard/relocation"   element={<Relocation />} />
+        <Route path="/dashboard/notifications" element={<Notifications />} />
       </Route>
 
       {/* HR routes */}

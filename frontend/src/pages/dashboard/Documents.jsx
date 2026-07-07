@@ -24,6 +24,7 @@ export default function Documents() {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(null);
+  const [removing, setRemoving] = useState(null);
   const [error, setError] = useState("");
   const [checkedTips, setCheckedTips] = useState({});
 
@@ -55,6 +56,19 @@ export default function Documents() {
     }
   };
 
+  const handleRemove = async (docId) => {
+    setRemoving(docId);
+    setError("");
+    try {
+      await documentsApi.remove(docId);
+      await load();
+    } catch {
+      setError("Remove failed. Please try again.");
+    } finally {
+      setRemoving(null);
+    }
+  };
+
   const stats = useMemo(() => {
     const submitted = docs.filter((d) => d.status !== "missing").length;
     return {
@@ -70,7 +84,7 @@ export default function Documents() {
   if (loading) return <LoadingSpinner />;
 
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className="w-full space-y-6">
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-950 via-gray-900 to-gray-900 p-6 sm:flex sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Digital Document Center</p>
@@ -88,7 +102,7 @@ export default function Documents() {
         </div>
       )}
 
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <DocumentStat label="Required files" value={stats.required} accent="#6366F1" />
         <DocumentStat label="Submitted" value={stats.submitted} accent="#F59E0B" />
         <DocumentStat label="Pending" value={stats.pending} accent="#EF4444" />
@@ -104,7 +118,13 @@ export default function Documents() {
           <Badge color="gray">PDF, JPG, PNG, DOC</Badge>
         </div>
 
-        <DocumentUploadPanel documents={docs} handleUpload={handleUpload} uploading={uploading} />
+        <DocumentUploadPanel
+          documents={docs}
+          handleRemove={handleRemove}
+          handleUpload={handleUpload}
+          removing={removing}
+          uploading={uploading}
+        />
       </DocumentPanel>
 
       <DocumentPanel>
@@ -138,13 +158,13 @@ export default function Documents() {
   );
 }
 
-function DocumentUploadPanel({ documents, handleUpload, uploading }) {
+function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, uploading }) {
   if (documents.length === 0) {
     return <p className="py-4 text-center text-sm text-gray-400">No documents found.</p>;
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="grid max-h-[70vh] gap-3 overflow-y-auto pr-1">
       {documents.map((document) => {
         const theme = STATUS_THEME[document.status] ?? STATUS_THEME.missing;
         return (
@@ -164,25 +184,39 @@ function DocumentUploadPanel({ documents, handleUpload, uploading }) {
                   {document.deadline ? <span>Deadline: {document.deadline}</span> : null}
                   {document.uploaded_at ? <span>Uploaded: {document.uploaded_at}</span> : null}
                   {document.file_name ? <span>File: {document.file_name}</span> : null}
+                  {document.approval_status ? <span>Approval: {document.approval_status}</span> : null}
+                  {document.rejection_reason ? <span className="text-rose-400">Rejected: {document.rejection_reason}</span> : null}
                 </div>
               </div>
 
               {document.status !== "verified" ? (
-                <label className="shrink-0">
-                  <input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                    className="hidden"
-                    onChange={(event) => handleUpload(document.id, event.target.files?.[0])}
-                  />
-                  <span
-                    className={`inline-flex cursor-pointer items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 ${
-                      uploading === document.id ? "pointer-events-none opacity-50" : ""
-                    }`}
-                  >
-                    {uploading === document.id ? "Uploading…" : document.status === "missing" ? "Upload" : "Re-upload"}
-                  </span>
-                </label>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <label>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      className="hidden"
+                      onChange={(event) => handleUpload(document.id, event.target.files?.[0])}
+                    />
+                    <span
+                      className={`inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 ${
+                        uploading === document.id || removing === document.id ? "pointer-events-none opacity-50" : ""
+                      }`}
+                    >
+                      {uploading === document.id ? "Uploading..." : document.status === "missing" ? "Upload" : "Re-upload"}
+                    </span>
+                  </label>
+                  {document.file_name ? (
+                    <button
+                      type="button"
+                      disabled={uploading === document.id || removing === document.id}
+                      onClick={() => handleRemove(document.id)}
+                      className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-300 bg-white/60 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {removing === document.id ? "Removing..." : "Remove"}
+                    </button>
+                  ) : null}
+                </div>
               ) : (
                 <Badge color="green">Verified</Badge>
               )}

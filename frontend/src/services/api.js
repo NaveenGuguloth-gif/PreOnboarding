@@ -350,6 +350,358 @@ const demoState = {
 
 const response = (data) => Promise.resolve({ data });
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const reminderMessage =
+  "Your joining date is coming soon. Please complete your pending onboarding activities, including profile details, document upload, learning modules, and readiness tasks before your joining date.";
+
+const clampPercent = (value) => Math.min(100, Math.max(0, Math.round(value || 0)));
+const profileSectionIds = [
+  "personal_info",
+  "emergency_contacts",
+  "bank_details",
+  "tax_information",
+  "profile_photo",
+];
+
+function daysUntil(dateValue) {
+  if (!dateValue) return 0;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const joining = new Date(dateValue);
+  joining.setHours(0, 0, 0, 0);
+  return Math.ceil((joining - todayStart) / 86400000);
+}
+
+function defaultDocumentRows(state) {
+  const fromRequirements = (state.documentRequirements ?? []).map((requirement) => ({
+    id: requirement.id,
+    name: requirement.name,
+    status: "missing",
+    deadline: addDays(requirement.due_days_before_joining ?? 7),
+    accepted_formats: requirement.accepted_formats ?? [],
+  }));
+
+  if (fromRequirements.length > 0) return fromRequirements;
+  return (state.documents ?? []).map(({ id, name, deadline, accepted_formats }) => ({
+    id,
+    name,
+    deadline,
+    accepted_formats,
+    status: "missing",
+  }));
+}
+
+function documentRowsForUser(state, userId) {
+  if (userId === "emp-001" && !state.userDocuments?.[userId]) return state.documents ?? [];
+  const savedRows = state.userDocuments?.[userId] ?? [];
+  const savedById = new Map(savedRows.map((doc) => [doc.id, doc]));
+  return defaultDocumentRows(state).map((doc) => ({ ...doc, ...(savedById.get(doc.id) ?? {}) }));
+}
+
+function modulesForUser(state, user) {
+  const department = (user?.department ?? "").trim().toLowerCase();
+  const role = (user?.role ?? user?.designation ?? "").trim().toLowerCase();
+  const plant = (user?.location ?? "").trim().toLowerCase();
+  const taskModules = (state.tasks ?? [])
+    .filter((task) => {
+      if (task.status && task.status !== "published") return false;
+      const taskDepartment = (task.department || "All").trim().toLowerCase();
+      return !department || ["all", "overall", "everyone", "employees"].includes(taskDepartment) || taskDepartment === department;
+    })
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      category: task.department || "General",
+      description: task.description || "",
+      progress: 0,
+      required: task.mandatory ? 1 : 0,
+      duration_minutes: task.duration_minutes ?? 15,
+      file_url: task.file_url || "",
+      content_type: task.content_type || "document",
+      uploaded_by: task.uploaded_by || "HR",
+      audience: task.department && task.department !== "All" ? "Department-based" : "Company-wide",
+      track: task.department && task.department !== "All" ? "department" : "culture",
+      quiz_available: Boolean(task.mandatory),
+      certificate_available: Boolean(task.mandatory),
+      applies_to: task.department && task.department !== "All" ? task.department : "All employees",
+    }));
+
+  const catalogModules = personalizedLearningCatalog(user);
+  const baseModules = [...taskModules, ...catalogModules, ...(taskModules.length > 0 ? [] : state.modules ?? [])];
+  const progressMap = state.userModuleProgress?.[user?.id] ?? {};
+  const seen = new Set();
+  return baseModules
+    .filter((module) => {
+      const moduleDepartment = (module.department_target ?? module.department ?? "").toLowerCase();
+      const moduleRole = (module.role_target ?? "").toLowerCase();
+      const modulePlant = (module.plant_target ?? "").toLowerCase();
+      const departmentMatch = !moduleDepartment || moduleDepartment === "all" || moduleDepartment === department;
+      const roleMatch = !moduleRole || role.includes(moduleRole) || moduleRole.includes(role);
+      const plantMatch = !modulePlant || plant.includes(modulePlant) || modulePlant.includes(plant);
+      return departmentMatch && roleMatch && plantMatch;
+    })
+    .filter((module) => {
+      if (seen.has(module.id)) return false;
+      seen.add(module.id);
+      return true;
+    })
+    .map((module) => ({
+      ...module,
+      progress: user?.id === "emp-001" && progressMap[module.id] == null ? module.progress ?? 0 : progressMap[module.id] ?? 0,
+    }));
+}
+
+function personalizedLearningCatalog(user) {
+  const department = user?.department || "General";
+  const role = user?.role || user?.designation || "New Joiner";
+  const location = user?.location || "Assigned Plant";
+  const plantName = location.replace(/\s*Plant\s*/i, "").trim() || location;
+
+  return [
+    {
+      id: `dept-${department.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "general"}-orientation`,
+      title: `${department} department onboarding`,
+      category: "Department-based learning",
+      description: `Focused workflows, stakeholders, and expectations for the ${department} team.`,
+      progress: 0,
+      required: 1,
+      duration_minutes: 25,
+      content_type: "document",
+      uploaded_by: "HR Learning Team",
+      audience: "Department-based",
+      track: "department",
+      department_target: department,
+      applies_to: department,
+      quiz_available: true,
+      certificate_available: true,
+    },
+    {
+      id: `role-${role.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "new-joiner"}-essentials`,
+      title: `${role} role essentials`,
+      category: "Role-based learning",
+      description: "Role expectations, day-one deliverables, tool access, and collaboration norms.",
+      progress: 0,
+      required: 1,
+      duration_minutes: 30,
+      content_type: "document",
+      uploaded_by: "Department Manager",
+      audience: "Role-based",
+      track: "role",
+      role_target: role,
+      applies_to: role,
+      quiz_available: true,
+      certificate_available: true,
+    },
+    {
+      id: `plant-${plantName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "assigned"}-safety`,
+      title: `${location} safety briefing`,
+      category: "Plant-specific safety modules",
+      description: "Gate entry, PPE, emergency response, visitor movement, and reporting protocols.",
+      progress: 0,
+      required: 1,
+      duration_minutes: 35,
+      content_type: "document",
+      uploaded_by: "Safety Team",
+      audience: "Plant-specific",
+      track: "safety",
+      plant_target: plantName,
+      applies_to: location,
+      quiz_available: true,
+      certificate_available: true,
+    },
+    {
+      id: "company-culture-values",
+      title: "Company culture and values",
+      category: "Company culture",
+      description: "How Tata Motors teams collaborate, communicate, and make decisions.",
+      progress: 0,
+      required: 1,
+      duration_minutes: 20,
+      content_type: "document",
+      uploaded_by: "People Experience",
+      audience: "Company-wide",
+      track: "culture",
+      applies_to: "All employees",
+      quiz_available: true,
+      certificate_available: true,
+    },
+    {
+      id: "code-of-conduct-certification",
+      title: "Code of conduct certification",
+      category: "Code of conduct",
+      description: "Workplace ethics, compliance expectations, information security, and escalation paths.",
+      progress: 0,
+      required: 1,
+      duration_minutes: 30,
+      content_type: "document",
+      uploaded_by: "Compliance Team",
+      audience: "Company-wide",
+      track: "conduct",
+      applies_to: "All employees",
+      quiz_available: true,
+      certificate_available: true,
+    },
+  ];
+}
+
+function profileSectionsForUser(state, user) {
+  if (!user) return {};
+  const saved = state.userProfileSections?.[user.id];
+  if (saved) return saved;
+
+  const candidate = (state.candidates ?? []).find((item) => item.id === user.id || item.email === user.email);
+  const completedCount = Math.floor(((candidate?.profile_completion ?? user.profile_completion ?? 0) / 100) * profileSectionIds.length);
+  return profileSectionIds.reduce((sections, id, index) => {
+    sections[id] = index < completedCount;
+    return sections;
+  }, {});
+}
+
+function calculateProgressForUser(state, user) {
+  if (!user) {
+    return { profileCompletion: 0, documentCompletion: 0, learningCompletion: 0, readinessScore: 0, profileSections: {} };
+  }
+  const documents = documentRowsForUser(state, user.id);
+  const modules = modulesForUser(state, user);
+  const profileSections = profileSectionsForUser(state, user);
+  const documentCompletion = documents.length
+    ? clampPercent((documents.filter((doc) => doc.status !== "missing").length / documents.length) * 100)
+    : 0;
+  const learningCompletion = modules.length
+    ? clampPercent(modules.reduce((sum, mod) => sum + (mod.progress ?? 0), 0) / modules.length)
+    : 0;
+  const profileCompletion = clampPercent(
+    (profileSectionIds.filter((id) => profileSections[id]).length / profileSectionIds.length) * 100
+  );
+  const readinessScore = clampPercent((profileCompletion + documentCompletion + learningCompletion) / 3);
+  return { profileCompletion, documentCompletion, learningCompletion, readinessScore, profileSections };
+}
+
+function syncCandidateProgress(state, userId) {
+  const user = (state.users ?? []).find((item) => item.id === userId);
+  if (!user) return state;
+  const progress = calculateProgressForUser(state, user);
+  state.candidates = (state.candidates ?? []).map((candidate) =>
+    candidate.id === userId || candidate.email === user.email
+      ? {
+          ...candidate,
+          profile_completion: progress.profileCompletion,
+          document_completion: progress.documentCompletion,
+          learning_completion: progress.learningCompletion,
+          learning_progress: progress.learningCompletion,
+          readiness_score: progress.readinessScore,
+          last_activity: progress.readinessScore >= 100 ? "Onboarding completed" : candidate.last_activity,
+        }
+      : candidate
+  );
+  return state;
+}
+
+function candidateWithDerivedStatus(candidate) {
+  const readiness = clampPercent(candidate.readiness_score ?? 0);
+  const joiningDays = daysUntil(candidate.joining_date);
+  const complete = readiness >= 100;
+  const nearJoining = joiningDays >= 0 && joiningDays <= 7;
+  const needsAttention = nearJoining && !complete;
+  const notificationStatus = complete
+    ? "Completed"
+    : candidate.last_notified_at
+      ? "Notified"
+      : needsAttention
+        ? "Pending Notification"
+        : "On Track";
+
+  return {
+    ...candidate,
+    joining_days_remaining: joiningDays,
+    needs_attention: needsAttention,
+    notification_status: notificationStatus,
+  };
+}
+
+function onboardingStatusLabel(candidate) {
+  const readiness = candidate.readiness_score ?? 0;
+  if (readiness >= 100) return "Ready";
+  if (candidate.needs_attention || readiness < 30) return "Critical";
+  return "In Progress";
+}
+
+function generatedNotificationsFor(state, user) {
+  if (!user) return [];
+  const now = new Date().toISOString();
+  const documents = documentRowsForUser(state, user.id);
+  const modules = modulesForUser(state, user);
+  const pendingDocs = documents.filter((doc) => doc.status === "missing").length;
+  const submittedDocs = documents.filter((doc) => doc.status === "submitted").length;
+  const pendingModules = modules.filter((module) => (module.progress ?? 0) < 100).length;
+  const daysRemaining = daysUntil(user.joiningDate ?? user.joining_date);
+  const items = [
+    {
+      id: `welcome-${user.id}`,
+      user_id: user.id,
+      type: "welcome",
+      title: "Welcome to Pre-Onboarding",
+      message: "Your onboarding workspace is ready. Start with profile completion, documents, learning, and relocation planning.",
+      priority: "normal",
+      created_at: now,
+    },
+    {
+      id: `hr-announcement-${user.id}`,
+      user_id: user.id,
+      type: "hr_announcement",
+      title: "HR announcement",
+      message: "Please keep your original documents and joining letter ready for Day 1 verification.",
+      priority: "normal",
+      created_at: now,
+    },
+  ];
+
+  if (pendingDocs > 0 || pendingModules > 0) {
+    items.push({
+      id: `pending-tasks-${user.id}`,
+      user_id: user.id,
+      type: "pending_tasks",
+      title: "Pending onboarding tasks",
+      message: `${pendingDocs} document${pendingDocs === 1 ? "" : "s"} and ${pendingModules} learning module${pendingModules === 1 ? "" : "s"} still need attention.`,
+      priority: "high",
+      created_at: now,
+    });
+  }
+  if (pendingModules > 0) {
+    items.push({
+      id: `learning-reminder-${user.id}`,
+      user_id: user.id,
+      type: "learning_reminder",
+      title: "Learning reminder",
+      message: "Complete assigned department, role, plant safety, culture, and code of conduct modules before joining.",
+      priority: "normal",
+      created_at: now,
+    });
+  }
+  if (submittedDocs > 0) {
+    items.push({
+      id: `document-approval-${user.id}`,
+      user_id: user.id,
+      type: "document_approval",
+      title: "Document approval in progress",
+      message: `${submittedDocs} uploaded document${submittedDocs === 1 ? " is" : "s are"} waiting for HR approval.`,
+      priority: "normal",
+      created_at: now,
+    });
+  }
+  if (daysRemaining >= 0 && daysRemaining <= 7) {
+    items.push({
+      id: `joining-reminder-${user.id}`,
+      user_id: user.id,
+      type: "joining_reminder",
+      title: daysRemaining === 0 ? "Joining today" : "Joining date approaching",
+      message: daysRemaining === 0 ? "Today is your joining day. Follow the Day 1 Simulator timeline." : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"} to go. Complete pending onboarding activities before your joining date.`,
+      priority: "high",
+      created_at: now,
+    });
+  }
+
+  return items;
+}
 
 function getState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -372,6 +724,14 @@ function getState() {
     merged[key] = [...savedItems, ...demoState[key].filter((item) => !savedIds.has(item.id))];
   }
 
+  merged.userDocuments = merged.userDocuments ?? {};
+  merged.userModuleProgress = merged.userModuleProgress ?? {};
+  merged.userProfileSections = merged.userProfileSections ?? {};
+  merged.notifications = merged.notifications ?? [];
+  merged.notificationReads = merged.notificationReads ?? {};
+  merged.notificationHistory = merged.notificationHistory ?? [];
+  merged.candidates = (merged.candidates ?? []).map(candidateWithDerivedStatus);
+
   return merged;
 }
 
@@ -384,6 +744,19 @@ function currentUser() {
   const sessionId = localStorage.getItem(SESSION_KEY);
   if (!sessionId) return null;
   return getState().users.find((user) => user.id === sessionId) ?? null;
+}
+
+function rememberSessionUser(user) {
+  const normalized = publicUser(user);
+  if (!normalized?.id) return normalized;
+  const state = getState();
+  const existing = state.users.some((item) => item.id === normalized.id);
+  state.users = existing
+    ? state.users.map((item) => (item.id === normalized.id ? { ...item, ...normalized } : item))
+    : [...state.users, normalized];
+  localStorage.setItem(SESSION_KEY, normalized.id);
+  setState(state);
+  return normalized;
 }
 
 function publicUser(user) {
@@ -408,59 +781,58 @@ function withFallback(request, fallback) {
 
 function metricsFromState() {
   const state = getState();
-  const documentCompletion = Math.round(
-    (state.documents.filter((doc) => doc.status === "verified").length / state.documents.length) * 100
-  );
-  const learningCompletion = Math.round(
-    state.modules.reduce((sum, mod) => sum + (mod.progress ?? 0), 0) / state.modules.length
-  );
-  const profileCompletion = 92;
-  const readinessScore = Math.round((documentCompletion + learningCompletion + profileCompletion) / 3);
   const user = currentUser();
-  const daysRemaining = user?.joiningDate
-    ? Math.max(0, Math.ceil((new Date(user.joiningDate) - today) / 86400000))
-    : 0;
+  const progress = calculateProgressForUser(state, user);
+  const daysRemaining = Math.max(0, daysUntil(user?.joiningDate));
+  const candidate = (state.candidates ?? []).find((item) => item.id === user?.id || item.email === user?.email);
 
-  return { profileCompletion, documentCompletion, learningCompletion, readinessScore, daysRemaining };
+  return {
+    ...progress,
+    daysRemaining,
+    teamAssignment: candidate?.team_assignment ?? null,
+    welcomeKitAssignment: candidate?.welcome_kit_assignment ?? {},
+  };
 }
 
 function analyticsFromState() {
-  const candidates = getState().candidates;
-  const avg = (key) => Math.round(candidates.reduce((sum, item) => sum + item[key], 0) / candidates.length);
+  const candidates = getState().candidates.map(candidateWithDerivedStatus);
+  const avg = (key) => candidates.length ? Math.round(candidates.reduce((sum, item) => sum + (item[key] ?? 0), 0) / candidates.length) : 0;
+  const inJoiningWeek = (candidate) =>
+    (candidate.joining_days_remaining ?? 99) >= 0 && (candidate.joining_days_remaining ?? 99) <= 7;
+  const learningValue = (candidate) => candidate.learning_completion ?? candidate.learning_progress ?? 0;
+
   return {
     totalCandidates: candidates.length,
     avgProfileCompletion: avg("profile_completion"),
     avgDocumentCompletion: avg("document_completion"),
-    avgLearningCompletion: avg("learning_completion"),
+    avgLearningCompletion: candidates.length
+      ? Math.round(candidates.reduce((sum, item) => sum + learningValue(item), 0) / candidates.length)
+      : 0,
     avgReadinessScore: avg("readiness_score"),
+    pendingDocuments: candidates.filter((candidate) => (candidate.document_completion ?? 0) < 100).length,
+    learningPending: candidates.filter((candidate) => learningValue(candidate) < 100).length,
+    readyCandidates: candidates.filter((candidate) => (candidate.readiness_score ?? 0) >= 100).length,
+    joiningToday: candidates.filter((candidate) => candidate.joining_days_remaining === 0).length,
+    joiningThisWeek: candidates.filter(inJoiningWeek).length,
+    upcomingJoiners: candidates.filter((candidate) => (candidate.joining_days_remaining ?? 99) >= 0 && (candidate.joining_days_remaining ?? 99) <= 30).length,
+    highRiskJoiners: candidates.filter((candidate) => inJoiningWeek(candidate) && (candidate.readiness_score ?? 0) < 60).length,
+    attentionRequired: candidates.filter((candidate) => candidate.needs_attention).length,
   };
 }
 
 function modulesFromHrTasks() {
   const state = getState();
   const user = currentUser();
-  const department = (user?.department ?? "").trim().toLowerCase();
-  const taskModules = (state.tasks ?? [])
-    .filter((task) => {
-      if (task.status && task.status !== "published") return false;
-      const taskDepartment = (task.department || "All").trim().toLowerCase();
-      return !department || ["all", "overall", "everyone", "employees"].includes(taskDepartment) || taskDepartment === department;
-    })
-    .map((task) => ({
-      id: task.id,
-      title: task.title,
-      category: task.department || "General",
-      description: task.description || "",
-      progress: task.progress ?? 0,
-      required: task.mandatory ? 1 : 0,
-      duration_minutes: task.duration_minutes ?? 15,
-      file_url: task.file_url || "",
-      content_type: task.content_type || "document",
-      uploaded_by: task.uploaded_by || "HR",
-    }));
+  const taskModules = modulesForUser(state, user);
 
   const taskIds = new Set(taskModules.map((task) => task.id));
-  const staticModules = (state.modules ?? []).filter((module) => !taskIds.has(module.id));
+  const progressMap = state.userModuleProgress?.[user?.id] ?? {};
+  const staticModules = (state.modules ?? [])
+    .filter((module) => !taskIds.has(module.id))
+    .map((module) => ({
+      ...module,
+      progress: user?.id === "emp-001" && progressMap[module.id] == null ? module.progress ?? 0 : progressMap[module.id] ?? 0,
+    }));
   return [...taskModules, ...staticModules];
 }
 
@@ -468,13 +840,40 @@ function relocationSuggestionsFor(location) {
   const area = location?.trim() || "your preferred area";
   return [
     {
-      id: "fallback-apartments",
-      category: "Accommodation",
-      title: `Apartments and PGs near ${area}`,
-      description: "Compare furnished apartments, PGs, shared flats, deposits, and commute time.",
+      id: "fallback-pgs",
+      category: "Nearby PGs",
+      title: `PG stays near ${area}`,
+      description: "Meal-inclusive PGs and hostels for first-month relocation.",
       address: `${area} residential clusters`,
-      contact: "Verify with HR travel desk or local listings",
-      distance_km: 1.5,
+      contact: "+91 20 4100 2231",
+      distance_km: 1.2,
+      plant_distance_km: 3.4,
+      monthly_cost: "₹8,000-₹14,000/month",
+      commute_time: "15-25 min to plant",
+    },
+    {
+      id: "fallback-flats",
+      category: "Flats",
+      title: `Shared flats and 1BHKs near ${area}`,
+      description: "Longer-stay housing options with deposit and commute comparison.",
+      address: `${area} apartment belt`,
+      contact: "+91 20 4100 2242",
+      distance_km: 1.8,
+      plant_distance_km: 4.1,
+      monthly_cost: "₹16,000-₹28,000/month",
+      commute_time: "20-35 min to plant",
+    },
+    {
+      id: "fallback-hotels",
+      category: "Hotels",
+      title: `Short-stay hotels near ${area}`,
+      description: "Arrival-week hotels for employees and family travel.",
+      address: `${area} main road`,
+      contact: "+91 20 4100 2255",
+      distance_km: 2.0,
+      plant_distance_km: 4.8,
+      monthly_cost: "₹1,800-₹4,500/night",
+      commute_time: "20-40 min to plant",
     },
     {
       id: "fallback-hospitals",
@@ -482,8 +881,11 @@ function relocationSuggestionsFor(location) {
       title: `Hospitals and clinics near ${area}`,
       description: "Save emergency care, general physician, pharmacy, and diagnostics options.",
       address: `${area} main road and nearby market`,
-      contact: "Verify emergency number before relying on it",
+      contact: "+91 20 4100 2290",
       distance_km: 2.0,
+      plant_distance_km: 3.8,
+      monthly_cost: "Consultation ₹500-₹1,200",
+      commute_time: "15-30 min to plant",
     },
     {
       id: "fallback-gyms",
@@ -491,8 +893,35 @@ function relocationSuggestionsFor(location) {
       title: `Gyms near ${area}`,
       description: "Look for monthly plans, trial sessions, lockers, and walkable distance.",
       address: `${area} market / high-street area`,
-      contact: "Visit before paying membership",
+      contact: "+91 20 4100 2266",
       distance_km: 1.0,
+      plant_distance_km: 3.2,
+      monthly_cost: "₹1,200-₹2,500/month",
+      commute_time: "10-25 min to plant",
+    },
+    {
+      id: "fallback-schools",
+      category: "Schools",
+      title: `Schools near ${area}`,
+      description: "Education options for employees relocating with family.",
+      address: `${area} education corridor`,
+      contact: "+91 20 4100 2277",
+      distance_km: 2.8,
+      plant_distance_km: 5.6,
+      monthly_cost: "Fees vary by school",
+      commute_time: "25-45 min to plant",
+    },
+    {
+      id: "fallback-malls",
+      category: "Shopping Malls",
+      title: `Shopping malls near ${area}`,
+      description: "Food, household setup, electronics, and weekend shopping.",
+      address: `${area} retail zone`,
+      contact: "+91 20 4100 2288",
+      distance_km: 3.1,
+      plant_distance_km: 6.2,
+      monthly_cost: "Lifestyle spend varies",
+      commute_time: "25-45 min to plant",
     },
     {
       id: "fallback-essentials",
@@ -502,6 +931,21 @@ function relocationSuggestionsFor(location) {
       address: `${area} local market`,
       contact: "Save two backup options",
       distance_km: 0.8,
+      plant_distance_km: 3.0,
+      monthly_cost: "₹6,000-₹12,000/month basics",
+      commute_time: "10-20 min to plant",
+    },
+    {
+      id: "fallback-transport",
+      category: "Transport",
+      title: `Transportation from ${area}`,
+      description: "Compare shuttle, rail, bus, auto, cab pooling, and first-week commute time.",
+      address: `${area} commute corridor`,
+      contact: "transport.support@tatamotors.com",
+      distance_km: 3.2,
+      plant_distance_km: 3.2,
+      monthly_cost: "₹1,500-₹5,000/month commute",
+      commute_time: "15-40 min to plant",
     },
   ];
 }
@@ -510,33 +954,40 @@ function relocationCategoriesFor(location) {
   const area = location?.trim() || "your preferred area";
   return [
     {
-      key: "apartments",
-      title: "Apartments",
-      columns: ["Rank", "Name", "Distance", "Travel Time", "Rent", "Contact", "Rating"],
+      key: "housing",
+      title: "PGs, Flats, and Hotels",
+      columns: ["Rank", "Type", "Name", "Plant Distance", "Travel Time", "Cost", "Contact"],
       items: [
-        { Rank: "1", Name: `Apartments near ${area}`, Distance: "1.5 km", "Travel Time": "Not Available", Rent: "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "2", Name: "Not Available", Distance: "Not Available", "Travel Time": "Not Available", Rent: "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "3", Name: "Not Available", Distance: "Not Available", "Travel Time": "Not Available", Rent: "Not Available", Contact: "Not Available", Rating: "Not Available" },
+        { Rank: "1", Type: "PG", Name: `PG stays near ${area}`, "Plant Distance": "3.4 km", "Travel Time": "15-25 min", Cost: "₹8,000-₹14,000/month", Contact: "+91 20 4100 2231" },
+        { Rank: "2", Type: "Flat", Name: `Shared flats near ${area}`, "Plant Distance": "4.1 km", "Travel Time": "20-35 min", Cost: "₹16,000-₹28,000/month", Contact: "+91 20 4100 2242" },
+        { Rank: "3", Type: "Hotel", Name: `Short-stay hotels near ${area}`, "Plant Distance": "4.8 km", "Travel Time": "20-40 min", Cost: "₹1,800-₹4,500/night", Contact: "+91 20 4100 2255" },
       ],
     },
     {
       key: "hospitals",
       title: "Hospitals",
-      columns: ["Rank", "Name", "Distance", "Emergency", "Contact", "Rating"],
+      columns: ["Rank", "Name", "Plant Distance", "Emergency", "Contact", "Cost"],
       items: [
-        { Rank: "1", Name: `Hospitals near ${area}`, Distance: "2 km", Emergency: "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "2", Name: "Not Available", Distance: "Not Available", Emergency: "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "3", Name: "Not Available", Distance: "Not Available", Emergency: "Not Available", Contact: "Not Available", Rating: "Not Available" },
+        { Rank: "1", Name: `Hospitals near ${area}`, "Plant Distance": "3.8 km", Emergency: "24x7 emergency", Contact: "+91 20 4100 2290", Cost: "Consultation ₹500-₹1,200" },
       ],
     },
     {
-      key: "fitness",
-      title: "Fitness Centers",
-      columns: ["Rank", "Name", "Distance", "Monthly Fees", "Contact", "Rating"],
+      key: "lifestyle",
+      title: "Gyms, Schools, and Shopping",
+      columns: ["Rank", "Type", "Name", "Plant Distance", "Monthly Cost", "Contact"],
       items: [
-        { Rank: "1", Name: `Gyms near ${area}`, Distance: "1 km", "Monthly Fees": "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "2", Name: "Not Available", Distance: "Not Available", "Monthly Fees": "Not Available", Contact: "Not Available", Rating: "Not Available" },
-        { Rank: "3", Name: "Not Available", Distance: "Not Available", "Monthly Fees": "Not Available", Contact: "Not Available", Rating: "Not Available" },
+        { Rank: "1", Type: "Gym", Name: `Gyms near ${area}`, "Plant Distance": "3.2 km", "Monthly Cost": "₹1,200-₹2,500/month", Contact: "+91 20 4100 2266" },
+        { Rank: "2", Type: "School", Name: `Schools near ${area}`, "Plant Distance": "5.6 km", "Monthly Cost": "Fees vary", Contact: "+91 20 4100 2277" },
+        { Rank: "3", Type: "Mall", Name: `Shopping malls near ${area}`, "Plant Distance": "6.2 km", "Monthly Cost": "Lifestyle spend varies", Contact: "+91 20 4100 2288" },
+      ],
+    },
+    {
+      key: "transport",
+      title: "Transportation and Cost of Living",
+      columns: ["Rank", "Name", "Plant Distance", "Travel Time", "Monthly Cost", "Contact"],
+      items: [
+        { Rank: "1", Name: `Transport from ${area}`, "Plant Distance": "3.2 km", "Travel Time": "15-40 min", "Monthly Cost": "₹1,500-₹5,000/month", Contact: "transport.support@tatamotors.com" },
+        { Rank: "2", Name: "Daily essentials", "Plant Distance": "3.0 km", "Travel Time": "10-20 min", "Monthly Cost": "₹6,000-₹12,000 basics", Contact: "Save two local options" },
       ],
     },
   ];
@@ -605,7 +1056,11 @@ export const authApi = {
     `${BASE_URL}/api/auth/oauth/${provider}/start?role=${encodeURIComponent(role)}&mode=${encodeURIComponent(mode)}`,
   login: (data) =>
     withFallback(
-      () => api.post("/api/auth/login", data),
+      () =>
+        api.post("/api/auth/login", data).then((res) => {
+          rememberSessionUser(res.data?.user);
+          return res;
+        }),
       () => {
         const state = getState();
         const identifier = data.identifier?.trim();
@@ -625,7 +1080,11 @@ export const authApi = {
     ),
   signup: (data) =>
     withFallback(
-      () => api.post("/api/auth/signup", data),
+      () =>
+        api.post("/api/auth/signup", data).then((res) => {
+          rememberSessionUser(res.data?.user);
+          return res;
+        }),
       () => {
         const state = getState();
         const id = `emp-${Date.now()}`;
@@ -657,11 +1116,18 @@ export const authApi = {
           joining_date: user.joiningDate,
           phone: "—",
           user_type: user.userType,
-          profile_completion: 70,
+          profile_completion: 0,
           document_completion: 0,
           learning_completion: 0,
-          readiness_score: 23,
+          learning_progress: 0,
+          readiness_score: 0,
+          current_stage: "Registered",
+          last_activity: "Account created",
+          notification_status: "On Track",
         });
+        state.userDocuments = { ...(state.userDocuments ?? {}), [id]: defaultDocumentRows(state) };
+        state.userModuleProgress = { ...(state.userModuleProgress ?? {}), [id]: {} };
+        state.userProfileSections = { ...(state.userProfileSections ?? {}), [id]: {} };
         setState(state);
         return { user: publicUser(user), demo: true };
       }
@@ -688,23 +1154,88 @@ export const authApi = {
 export const candidateApi = {
   getMe: () => withFallback(() => api.get("/api/candidate/me"), () => ({ user: publicUser(currentUser()) })),
   getMetrics: () => withFallback(() => api.get("/api/candidate/metrics"), metricsFromState),
-  updateProfile: (data) => api.patch("/api/candidate/profile", data).catch(() => response({ ok: true })),
+  listPeers: () =>
+    withFallback(
+      () => api.get("/api/candidate/peers"),
+      () => {
+        const state = getState();
+        const user = currentUser();
+        const peers = (state.candidates ?? [])
+          .filter((candidate) => candidate.id !== user?.id && candidate.email !== user?.email)
+          .map((candidate) => ({
+            id: candidate.id,
+            name: candidate.name,
+            email: candidate.email,
+            employee_id: candidate.employee_id,
+            department: candidate.department,
+            role: candidate.role ?? candidate.designation,
+            location: candidate.location,
+            joining_date: candidate.joining_date,
+            current_stage: candidate.current_stage ?? candidate.hr_status ?? candidate.status,
+            readiness_score: candidate.readiness_score ?? candidate.readinessScore ?? 0,
+          }));
+        return { peers };
+      }
+    ),
+  updateProfile: (data) =>
+    withFallback(
+      () => api.patch("/api/candidate/profile", data),
+      () => {
+        const state = getState();
+        const user = currentUser();
+        if (!user) return { ok: true };
+        state.users = state.users.map((item) => (item.id === user.id ? { ...item, ...data } : item));
+        if (data.profileSections) {
+          state.userProfileSections = {
+            ...(state.userProfileSections ?? {}),
+            [user.id]: data.profileSections,
+          };
+        }
+        const profileCompletion = data.profileSections
+          ? clampPercent((profileSectionIds.filter((id) => data.profileSections[id]).length / profileSectionIds.length) * 100)
+          : data.profile_completion ?? 100;
+        state.candidates = state.candidates.map((candidate) =>
+          candidate.id === user.id
+            ? { ...candidate, ...data, profile_completion: profileCompletion, last_activity: "Profile updated" }
+            : candidate
+        );
+        syncCandidateProgress(state, user.id);
+        setState(state);
+        return { ok: true };
+      }
+    ),
 };
 
 // Documents
 export const documentsApi = {
-  list: () => withFallback(() => api.get("/api/documents"), () => ({ documents: getState().documents })),
+  list: () =>
+    withFallback(
+      () => api.get("/api/documents"),
+      () => {
+        const state = getState();
+        const user = currentUser();
+        return { documents: documentRowsForUser(state, user?.id ?? "demo") };
+      }
+    ),
   upload: (id, formData) =>
     withFallback(
-      () =>
+      () => {
+        if (!formData.get("candidate_id")) {
+          formData.append("candidate_id", currentUser()?.id ?? "demo");
+        }
+        return (
         api.post("/api/documents/upload", formData, {
           headers: { "Content-Type": "multipart/form-data" },
           params: { documentId: id },
-        }),
+        })
+        );
+      },
       () => {
         const state = getState();
+        const user = currentUser();
+        const userId = user?.id ?? "demo";
         const file = formData.get("file");
-        state.documents = state.documents.map((doc) =>
+        const rows = documentRowsForUser(state, userId).map((doc) =>
           doc.id === id
             ? {
                 ...doc,
@@ -714,6 +1245,31 @@ export const documentsApi = {
               }
             : doc
         );
+        state.userDocuments = { ...(state.userDocuments ?? {}), [userId]: rows };
+        syncCandidateProgress(state, userId);
+        setState(state);
+        return { ok: true };
+      }
+    ),
+  remove: (id) =>
+    withFallback(
+      () => api.delete(`/api/documents/${id}`, { params: { candidate_id: currentUser()?.id ?? "demo" } }),
+      () => {
+        const state = getState();
+        const user = currentUser();
+        const userId = user?.id ?? "demo";
+        const rows = documentRowsForUser(state, userId).map((doc) =>
+          doc.id === id
+            ? {
+                ...doc,
+                status: "missing",
+                file_name: undefined,
+                uploaded_at: undefined,
+              }
+            : doc
+        );
+        state.userDocuments = { ...(state.userDocuments ?? {}), [userId]: rows };
+        syncCandidateProgress(state, userId);
         setState(state);
         return { ok: true };
       }
@@ -731,15 +1287,24 @@ export const learningApi = {
   },
   updateProgress: (data) =>
     withFallback(
-      () => api.post("/api/learning/progress", data),
+      () => api.post("/api/learning/progress", { ...data, candidate_id: currentUser()?.id ?? "demo" }),
       () => {
         const state = getState();
-        state.modules = state.modules.map((mod) =>
-          mod.id === data.moduleId ? { ...mod, progress: data.progress } : mod
-        );
-        state.tasks = (state.tasks ?? []).map((task) =>
-          task.id === data.moduleId ? { ...task, progress: data.progress } : task
-        );
+        const user = currentUser();
+        const userId = user?.id ?? "demo";
+        state.userModuleProgress = {
+          ...(state.userModuleProgress ?? {}),
+          [userId]: {
+            ...(state.userModuleProgress?.[userId] ?? {}),
+            [data.moduleId]: clampPercent(data.progress),
+          },
+        };
+        if (userId === "emp-001") {
+          state.modules = state.modules.map((mod) =>
+            mod.id === data.moduleId ? { ...mod, progress: clampPercent(data.progress) } : mod
+          );
+        }
+        syncCandidateProgress(state, userId);
         setState(state);
         return { ok: true };
       }
@@ -790,12 +1355,104 @@ export const assistantApi = {
   policies: (data) => api.post("/api/assistant/policies", data),
 };
 
+// Notifications
+export const notificationApi = {
+  list: (params = {}) =>
+    withFallback(
+      () => api.get("/api/notifications", { params: { user_id: currentUser()?.id ?? "demo", ...params } }),
+      () => {
+        const user = currentUser();
+        const state = getState();
+        const stored = (state.notifications ?? [])
+          .filter((item) => item.user_id === user?.id)
+          .map((item) => ({ type: "hr_announcement", priority: "normal", ...item }));
+        const generated = generatedNotificationsFor(state, user).map((item) => ({
+          ...item,
+          read: Boolean(state.notificationReads?.[item.id]),
+        }));
+        const notifications = [...stored, ...generated]
+          .filter((item) => !params.type || item.type === params.type)
+          .filter((item) => !params.unread_only || !item.read)
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        return { notifications };
+      }
+    ),
+  markRead: (id) =>
+    withFallback(
+      () => api.post(`/api/notifications/${id}/read`),
+      () => {
+        const state = getState();
+        state.notificationReads = { ...(state.notificationReads ?? {}), [id]: true };
+        state.notifications = (state.notifications ?? []).map((item) =>
+          item.id === id ? { ...item, read: true } : item
+        );
+        setState(state);
+        return { ok: true };
+      }
+    ),
+};
+
 // HR
 export const hrApi = {
   listCandidates: (params = {}) =>
     withFallback(
       () => api.get("/api/hr/candidates", { params }),
-      () => ({ candidates: getState().candidates, pagination: { page: 1, limit: getState().candidates.length, total: getState().candidates.length, pages: 1 } })
+      () => {
+        const state = getState();
+        let candidates = (state.candidates ?? []).map(candidateWithDerivedStatus);
+        if (params.search) {
+          const term = String(params.search).toLowerCase();
+          candidates = candidates.filter((candidate) =>
+            [
+              candidate.name,
+              candidate.employee_id,
+              candidate.email,
+              candidate.department,
+              candidate.role,
+              candidate.designation,
+              candidate.joining_date,
+              candidate.location,
+              candidate.current_stage,
+              candidate.notification_status,
+              onboardingStatusLabel(candidate),
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase()
+              .includes(term)
+          );
+        }
+        if (params.department) {
+          candidates = candidates.filter((candidate) => candidate.department === params.department);
+        }
+        if (params.location) {
+          candidates = candidates.filter((candidate) => candidate.location === params.location);
+        }
+        if (params.status) {
+          candidates = candidates.filter((candidate) => (candidate.current_stage ?? candidate.hr_status) === params.status);
+        }
+        if (params.joining_window && params.joining_window !== "all") {
+          const windows = { today: [0, 0], week: [0, 7], month: [0, 30] };
+          const [min, max] = windows[params.joining_window] ?? [-9999, 9999];
+          candidates = candidates.filter((candidate) => candidate.joining_days_remaining >= min && candidate.joining_days_remaining <= max);
+        }
+        const order = params.order === "asc" ? 1 : -1;
+        const sortKey = params.sort || "joining_date";
+        candidates = [...candidates].sort((a, b) => {
+          const left = a[sortKey] ?? "";
+          const right = b[sortKey] ?? "";
+          if (sortKey === "readiness_score" || sortKey === "document_completion") return ((left || 0) - (right || 0)) * order;
+          return String(left).localeCompare(String(right)) * order;
+        });
+        const page = Math.max(1, Number(params.page) || 1);
+        const limit = Math.max(1, Number(params.limit) || 25);
+        const total = candidates.length;
+        const start = (page - 1) * limit;
+        return {
+          candidates: candidates.slice(start, start + limit),
+          pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+        };
+      }
     ),
   getAnalytics: () => withFallback(() => api.get("/api/hr/analytics"), analyticsFromState),
   getCandidate: (id) =>
@@ -824,9 +1481,13 @@ export const hrApi = {
           readiness_score: data.readiness_score ?? 0,
           document_completion: data.document_completion ?? 0,
           learning_completion: data.learning_progress ?? 0,
-          profile_completion: data.profile_completion ?? 70,
+          learning_progress: data.learning_progress ?? 0,
+          profile_completion: data.profile_completion ?? 0,
+          current_stage: "Registered",
+          last_activity: "Candidate added by HR",
+          team_assignment: data.team_assignment ?? null,
         };
-        state.candidates.push(candidate);
+        state.candidates.push(candidateWithDerivedStatus(candidate));
         setState(state);
         return { candidate };
       }
@@ -838,6 +1499,9 @@ export const hrApi = {
         const state = getState();
         state.candidates = state.candidates.map((candidate) =>
           candidate.id === id ? { ...candidate, ...data } : candidate
+        );
+        state.users = state.users.map((user) =>
+          user.id === id ? { ...user, ...data } : user
         );
         setState(state);
         return { candidate: state.candidates.find((candidate) => candidate.id === id) };
@@ -851,6 +1515,42 @@ export const hrApi = {
         state.candidates = state.candidates.filter((candidate) => candidate.id !== id);
         setState(state);
         return { ok: true };
+      }
+    ),
+  notifyCandidate: (id) =>
+    withFallback(
+      () => api.post(`/api/hr/candidates/${id}/notify`),
+      () => {
+        const state = getState();
+        const now = new Date().toISOString();
+        const candidate = state.candidates.find((item) => item.id === id);
+        if (!candidate) return { ok: false };
+        const notification = {
+          id: `notif-${Date.now()}`,
+          user_id: id,
+          title: "Joining date reminder",
+          message: reminderMessage,
+          channel: "in_app",
+          read: false,
+          created_at: now,
+        };
+        state.notifications = [...(state.notifications ?? []), notification];
+        state.notificationHistory = [
+          ...(state.notificationHistory ?? []),
+          { id: `hist-${Date.now()}`, candidate_id: id, sent_at: now, channel: "in_app,email", message: reminderMessage },
+        ];
+        state.candidates = state.candidates.map((item) =>
+          item.id === id
+            ? candidateWithDerivedStatus({
+                ...item,
+                last_notified_at: now,
+                notification_status: "Notified",
+                last_activity: "Reminder sent by HR",
+              })
+            : item
+        );
+        setState(state);
+        return { ok: true, notification };
       }
     ),
   listDepartments: () =>

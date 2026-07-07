@@ -4,23 +4,13 @@ import { hrApi } from "../../services/api";
 import { Badge, Button, Input, ProgressBar } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
-const demoExtraCandidates = [
-  {
-    id: "emp-004",
-    name: "Praveen",
-    email: "praveen@tata.com",
-    department: "Production",
-    joining_date: "2026-06-05",
-    readiness_score: 23,
-    document_completion: 0,
-  },
-];
-
 const kpiMeta = [
-  { key: "avgProfileCompletion", label: "Avg Profile", icon: "U", delta: "12%", trend: "up", color: "blue" },
-  { key: "avgDocumentCompletion", label: "Avg Documents", icon: "F", delta: "8%", trend: "up", color: "green" },
-  { key: "avgLearningCompletion", label: "Avg Learning", icon: "L", delta: "5%", trend: "down", color: "purple" },
-  { key: "avgReadinessScore", label: "Avg Readiness", icon: "S", delta: "9%", trend: "up", color: "orange" },
+  { key: "totalCandidates", label: "Total New Joiners", icon: "N", color: "blue", helper: "Registered employees" },
+  { key: "joiningToday", label: "Joining Today", icon: "T", color: "orange", helper: "Day 1 starts today" },
+  { key: "avgReadinessScore", label: "Average Readiness", icon: "R", color: "purple", suffix: "%", helper: "Across all joiners" },
+  { key: "pendingDocuments", label: "Documents Pending", icon: "D", color: "red", helper: "Employees below 100%" },
+  { key: "learningPending", label: "Learning Pending", icon: "L", color: "orange", helper: "Modules still incomplete" },
+  { key: "attentionRequired", label: "Employees Needing Attention", icon: "A", color: "blue", helper: "Warnings or reminders" },
 ];
 
 const emptyCandidate = {
@@ -40,29 +30,51 @@ export default function HrDashboard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sortBy, setSortBy] = useState("Newest");
+  const [joiningWindow, setJoiningWindow] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("All");
+  const [locationFilter, setLocationFilter] = useState("All");
+  const [stageFilter, setStageFilter] = useState("All");
+  const [alertFilter, setAlertFilter] = useState("all");
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateForm, setCandidateForm] = useState(emptyCandidate);
   const [notice, setNotice] = useState("");
+  const [pagination, setPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 350);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   const loadDashboard = () => {
     const sortMap = {
       Newest: "joining_date",
       Readiness: "readiness_score",
       Name: "name",
+      Department: "department",
+      Location: "location",
     };
 
     return Promise.all([
-      hrApi.listCandidates({ search: query || undefined, sort: sortMap[sortBy] ?? "joining_date" }),
+      hrApi.listCandidates({
+        search: debouncedQuery || undefined,
+        sort: sortMap[sortBy] ?? "joining_date",
+        order: sortBy === "Newest" ? "desc" : "asc",
+        joining_window: joiningWindow,
+        department: departmentFilter === "All" ? undefined : departmentFilter,
+        location: locationFilter === "All" ? undefined : locationFilter,
+        status: stageFilter === "All" ? undefined : stageFilter,
+        page: pagination.page,
+        limit: pagination.limit,
+      }),
       hrApi.getAnalytics(),
     ])
       .then(([c, a]) => {
         const apiCandidates = c.data?.candidates ?? c.data ?? [];
-        const existingIds = new Set(apiCandidates.map((candidate) => candidate.id));
-        setCandidates([
-          ...apiCandidates,
-          ...demoExtraCandidates.filter((candidate) => !existingIds.has(candidate.id)),
-        ]);
+        setCandidates(apiCandidates);
+        setPagination((current) => c.data?.pagination ?? { ...current, total: apiCandidates.length, pages: 1 });
         setAnalytics(a.data);
       })
       .catch(() => {})
@@ -71,30 +83,57 @@ export default function HrDashboard() {
 
   useEffect(() => {
     loadDashboard();
-  }, [query, sortBy]);
+  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
 
-  const filteredCandidates = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    const next = candidates.filter((candidate) => {
-      if (!term) return true;
-      return `${candidate.name} ${candidate.email} ${candidate.department} ${candidate.role ?? ""}`
-        .toLowerCase()
-        .includes(term);
-    });
+  useEffect(() => {
+    setPagination((current) => ({ ...current, page: 1 }));
+    setSelectedIds([]);
+  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter]);
 
-    return [...next].sort((a, b) => {
-      if (sortBy === "Readiness") return (b.readiness_score ?? 0) - (a.readiness_score ?? 0);
-      if (sortBy === "Name") return a.name.localeCompare(b.name);
-      return new Date(b.joining_date) - new Date(a.joining_date);
-    });
-  }, [candidates, query, sortBy]);
+  useEffect(() => {
+    const timer = window.setInterval(loadDashboard, 30000);
+    return () => window.clearInterval(timer);
+  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
+
+  const filteredCandidates = candidates;
+
+  const departmentOptions = useMemo(
+    () => ["All", ...Array.from(new Set(candidates.map((candidate) => candidate.department).filter(Boolean))).sort()],
+    [candidates]
+  );
+  const locationOptions = useMemo(
+    () => ["All", ...Array.from(new Set(candidates.map((candidate) => candidate.location).filter(Boolean))).sort()],
+    [candidates]
+  );
+  const stageOptions = useMemo(
+    () => ["All", ...Array.from(new Set(candidates.map((candidate) => candidate.current_stage || candidate.hr_status).filter(Boolean))).sort()],
+    [candidates]
+  );
+
+  const hrAlerts = useMemo(() => buildHrAlerts(filteredCandidates), [filteredCandidates]);
+  const dueReminders = useMemo(() => filteredCandidates.filter(isReminderDue), [filteredCandidates]);
 
   if (loading) return <LoadingSpinner />;
 
-  const totalDisplay = Math.max(124, candidates.length);
+  const totalDisplay = pagination.total || candidates.length;
+  const allVisibleSelected = filteredCandidates.length > 0 && filteredCandidates.every((candidate) => selectedIds.includes(candidate.id));
 
   const setCandidate = (key) => (event) =>
     setCandidateForm((current) => ({ ...current, [key]: event.target.value }));
+
+  const toggleSelected = (id) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+
+  const toggleVisibleSelected = () => {
+    setSelectedIds((current) => {
+      if (allVisibleSelected) {
+        const visible = new Set(filteredCandidates.map((candidate) => candidate.id));
+        return current.filter((id) => !visible.has(id));
+      }
+      return Array.from(new Set([...current, ...filteredCandidates.map((candidate) => candidate.id)]));
+    });
+  };
 
   const createCandidate = async (event) => {
     event.preventDefault();
@@ -106,10 +145,10 @@ export default function HrDashboard() {
         ...candidateForm,
         employee_id: candidateForm.employee_id || `TM-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
         joining_date: candidateForm.joining_date || new Date().toISOString().slice(0, 10),
-        profile_completion: 60,
+        profile_completion: 0,
         document_completion: 0,
         learning_progress: 0,
-        readiness_score: 20,
+        readiness_score: 0,
       });
       setCandidateForm(emptyCandidate);
       setShowAddCandidate(false);
@@ -136,64 +175,96 @@ export default function HrDashboard() {
       role: "Graduate Engineer Trainee",
       location: "Pune Plant",
       joining_date: new Date().toISOString().slice(0, 10),
-      profile_completion: 50,
+      profile_completion: 0,
       document_completion: 0,
       learning_progress: 0,
-      readiness_score: 18,
+      readiness_score: 0,
     });
     setNotice("Bulk upload demo added 1 candidate.");
     await loadDashboard();
   };
 
-  const sendReminder = () => {
-    const pending = filteredCandidates.filter((candidate) => (candidate.document_completion ?? 0) < 100).length;
-    setNotice(`Reminder queued for ${pending} candidate${pending === 1 ? "" : "s"} with pending documents.`);
+  const notifyCandidate = async (candidate) => {
+    await hrApi.notifyCandidate(candidate.id);
+    setNotice(`Reminder sent to ${candidate.name}.`);
+    await loadDashboard();
   };
 
-  const exportCsv = () => {
-    const headers = ["Name", "Email", "Department", "Joining", "Readiness", "Documents", "Status"];
-    const rows = filteredCandidates.map((candidate) => [
-      candidate.name,
-      candidate.email,
-      candidate.department,
-      candidate.joining_date,
-      `${candidate.readiness_score}%`,
-      `${candidate.document_completion}%`,
-      candidate.readiness_score >= 90 ? "Completed" : candidate.readiness_score < 30 ? "Not Started" : "In Progress",
-    ]);
-    const csv = [headers, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "pre-onboarding-candidates.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-    setNotice("Candidate report downloaded.");
+  const runDueReminders = async () => {
+    const due = filteredCandidates.filter(isReminderDue);
+    await Promise.all(due.map((candidate) => hrApi.notifyCandidate(candidate.id)));
+    setNotice(`Smart reminders sent to ${due.length} due employee${due.length === 1 ? "" : "s"}.`);
+    await loadDashboard();
   };
 
   return (
     <div className="max-w-[1600px] space-y-6">
-      <section className="grid gap-4 xl:grid-cols-[1fr_auto]">
+      <section>
         <div className="relative">
           <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">Search</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="h-14 w-full rounded-lg border border-gray-800 bg-gray-950/60 pl-20 pr-14 text-sm text-white outline-none transition focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
-            placeholder="by name, email, department, or role..."
+            placeholder="by name, employee ID, email, department, role, joining date, location, or readiness..."
           />
           <span className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md border border-gray-800 px-2 py-1 text-xs text-gray-500">
             ⌘ K
           </span>
         </div>
+      </section>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <ToolbarButton label={sortBy === "Readiness" ? "Clear Filter" : "Needs Attention"} icon="F" onClick={() => setSortBy(sortBy === "Readiness" ? "Newest" : "Readiness")} />
-          <ToolbarButton label="01 May 2026 - 31 May 2026" icon="C" wide />
-          <ToolbarButton label="Export" icon="E" onClick={exportCsv} />
+      <section className="grid gap-3 rounded-xl border border-gray-800 bg-[#0b1020] p-4 lg:grid-cols-[1fr_220px_220px] 2xl:grid-cols-[1fr_220px_220px_220px_180px]">
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["all", "All"],
+            ["today", "Today"],
+            ["week", "This Week"],
+            ["month", "This Month"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setJoiningWindow(value)}
+              className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                joiningWindow === value
+                  ? "border-brand-700 bg-brand-700 text-white"
+                  : "border-gray-800 bg-gray-950/60 text-gray-400 hover:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <FilterSelect label="Department" value={departmentFilter} onChange={setDepartmentFilter} options={departmentOptions} />
+        <FilterSelect label="Location" value={locationFilter} onChange={setLocationFilter} options={locationOptions} />
+        <FilterSelect label="Stage" value={stageFilter} onChange={setStageFilter} options={stageOptions} />
+        <label className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2 text-sm text-gray-400">
+          Page size
+          <select
+            value={pagination.limit}
+            onChange={(event) => setPagination((current) => ({ ...current, page: 1, limit: Number(event.target.value) }))}
+            className="min-w-0 flex-1 bg-transparent text-white outline-none"
+          >
+            {[25, 50, 100].map((size) => (
+              <option key={size} className="bg-gray-950" value={size}>{size}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2 text-sm text-gray-400">
+          Sort
+          <select
+            value={sortBy}
+            onChange={(event) => setSortBy(event.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-white outline-none"
+          >
+            {["Newest", "Readiness", "Name", "Department", "Location"].map((option) => (
+              <option key={option} className="bg-gray-950">{option}</option>
+            ))}
+          </select>
+        </label>
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800">
+          {filteredCandidates.filter((candidate) => candidate.needs_attention).length} need reminder
         </div>
       </section>
 
@@ -229,10 +300,15 @@ export default function HrDashboard() {
         </form>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpiMeta.map((item) => (
           <KpiCard analytics={analytics} item={item} key={item.key} />
         ))}
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <HrNotificationCenter activeFilter={alertFilter} alerts={hrAlerts} onFilter={setAlertFilter} />
+        <SmartReminderEngine dueCount={dueReminders.length} onRun={runDueReminders} />
       </section>
 
       <section className="overflow-hidden rounded-xl border border-gray-800 bg-[#0b1020] shadow-2xl shadow-black/20">
@@ -240,6 +316,9 @@ export default function HrDashboard() {
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-white">All Candidates</h2>
             <span className="rounded-full bg-brand-700/80 px-2.5 py-1 text-xs font-semibold text-white">{totalDisplay}</span>
+            {selectedIds.length ? (
+              <span className="rounded-full border border-gray-700 px-2.5 py-1 text-xs font-semibold text-gray-300">{selectedIds.length} selected</span>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -269,15 +348,28 @@ export default function HrDashboard() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[1500px] text-sm">
               <thead>
                 <tr className="border-b border-gray-800 text-xs uppercase tracking-wider text-gray-500">
+                  <th className="px-5 py-4 text-left">
+                    <input
+                      checked={allVisibleSelected}
+                      className="h-4 w-4 rounded border-gray-700 bg-gray-900 accent-brand-600"
+                      onChange={toggleVisibleSelected}
+                      type="checkbox"
+                    />
+                  </th>
                   <th className="px-5 py-4 text-left">Name</th>
                   <th className="px-5 py-4 text-left">Department</th>
+                  <th className="px-5 py-4 text-left">Location</th>
                   <th className="px-5 py-4 text-left">Joining</th>
+                  <th className="px-5 py-4 text-left">Profile</th>
+                  <th className="px-5 py-4 text-left">Learning</th>
                   <th className="px-5 py-4 text-left">Readiness</th>
                   <th className="px-5 py-4 text-left">Documents</th>
+                  <th className="px-5 py-4 text-left">Notification</th>
                   <th className="px-5 py-4 text-left">Status</th>
+                  <th className="px-5 py-4 text-left">Stage</th>
                   <th className="px-5 py-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -285,9 +377,11 @@ export default function HrDashboard() {
                 {filteredCandidates.map((candidate) => (
                   <CandidateRow
                     candidate={candidate}
+                    checked={selectedIds.includes(candidate.id)}
                     key={candidate.id}
                     onDelete={deleteCandidate}
-                    onRemind={(candidateName) => setNotice(`Reminder queued for ${candidateName}.`)}
+                    onRemind={notifyCandidate}
+                    onSelect={toggleSelected}
                   />
                 ))}
               </tbody>
@@ -296,14 +390,23 @@ export default function HrDashboard() {
         )}
 
         <div className="flex flex-col gap-3 border-t border-gray-800 px-5 py-4 text-sm text-gray-500 md:flex-row md:items-center md:justify-between">
-          <span>Showing 1 to {Math.min(10, filteredCandidates.length)} of {totalDisplay} results</span>
+          <span>
+            Showing {(pagination.page - 1) * pagination.limit + (filteredCandidates.length ? 1 : 0)}
+            {" "}to {Math.min(pagination.page * pagination.limit, totalDisplay)} of {totalDisplay} results
+          </span>
           <div className="flex items-center gap-2">
-            {["‹", "1", "2", "3", "...", "13", "›"].map((item) => (
+            {paginationButtons(pagination).map((item) => (
               <button
                 key={item}
                 type="button"
+                disabled={item === "..." || item === pagination.page}
+                onClick={() => {
+                  if (item === "‹") setPagination((current) => ({ ...current, page: Math.max(1, current.page - 1) }));
+                  else if (item === "›") setPagination((current) => ({ ...current, page: Math.min(current.pages, current.page + 1) }));
+                  else if (item !== "...") setPagination((current) => ({ ...current, page: item }));
+                }}
                 className={`h-9 min-w-9 rounded-lg border border-gray-800 px-3 text-sm ${
-                  item === "1" ? "bg-brand-700 text-white" : "bg-gray-950/60 text-gray-400 hover:text-white"
+                  item === pagination.page ? "bg-brand-700 text-white" : "bg-gray-950/60 text-gray-400 hover:text-white disabled:cursor-default disabled:text-gray-600"
                 }`}
               >
                 {item}
@@ -314,32 +417,20 @@ export default function HrDashboard() {
       </section>
 
       <section className="flex flex-col gap-4 rounded-xl border border-gray-800 bg-[#0b1020] p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-4">
-          <h3 className="text-base font-semibold text-white">Quick Actions</h3>
-          <button type="button" onClick={() => setShowAddCandidate(true)} className="text-sm text-gray-400 transition hover:text-white">Add Candidate</button>
-          <button type="button" onClick={bulkUploadDemo} className="text-sm text-gray-400 transition hover:text-white">Bulk Upload</button>
-          <button type="button" onClick={sendReminder} className="text-sm text-gray-400 transition hover:text-white">Send Reminder</button>
-          <button type="button" onClick={exportCsv} className="text-sm text-gray-400 transition hover:text-white">Generate Report</button>
-          <button type="button" onClick={() => setSortBy("Newest")} className="text-sm text-gray-400 transition hover:text-white">View Calendar</button>
+        <div>
+          <h3 className="text-base font-semibold text-white">Candidate Management</h3>
+          <p className="mt-1 text-sm text-gray-400">Create employees manually or add a demo bulk candidate.</p>
         </div>
-        <button type="button" onClick={() => setShowAddCandidate(true)} className="rounded-lg bg-brand-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-brand-600">
-          + New Candidate
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={bulkUploadDemo} className="rounded-lg border border-gray-800 px-5 py-3 text-sm font-semibold text-gray-300 transition hover:bg-gray-900 hover:text-white">
+            Bulk Upload
+          </button>
+          <button type="button" onClick={() => setShowAddCandidate(true)} className="rounded-lg bg-brand-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-brand-600">
+            + New Candidate
+          </button>
+        </div>
       </section>
     </div>
-  );
-}
-
-function ToolbarButton({ icon, label, onClick, wide = false }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-14 rounded-lg border border-gray-800 bg-gray-950/60 px-5 text-sm font-semibold text-white transition hover:border-gray-700 hover:bg-gray-900 ${wide ? "sm:min-w-80" : ""}`}
-    >
-      <span className="mr-3 text-gray-500">{icon}</span>
-      {label}
-    </button>
   );
 }
 
@@ -350,6 +441,7 @@ function KpiCard({ analytics, item }) {
     green: "bg-green-900/30 text-green-300 border-green-800/80",
     purple: "bg-violet-900/30 text-violet-300 border-violet-800/80",
     orange: "bg-orange-900/30 text-orange-300 border-orange-800/80",
+    red: "bg-red-900/20 text-red-300 border-red-800/80",
   };
 
   return (
@@ -362,30 +454,224 @@ function KpiCard({ analytics, item }) {
       </div>
       <p className="mt-3 text-xs font-medium uppercase tracking-wider text-gray-400">{item.label}</p>
       <p className="mt-1 text-2xl font-semibold tracking-tight text-white">
-        {value}<span className="ml-1 text-sm font-normal text-gray-400">%</span>
+        {value}<span className="ml-1 text-sm font-normal text-gray-400">{item.suffix ?? ""}</span>
       </p>
-      <p className="mt-2 text-xs text-gray-400">
-        <span className={item.trend === "up" ? "text-green-400" : "text-red-400"}>
-          {item.trend === "up" ? "↑" : "↓"} {item.delta}
-        </span>{" "}
-        from last month
-      </p>
+      <p className="mt-2 text-xs text-gray-400">{item.helper}</p>
     </article>
   );
 }
 
-function CandidateRow({ candidate, onDelete, onRemind }) {
+function FilterSelect({ label, onChange, options, value }) {
+  return (
+    <label className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2 text-sm text-gray-400">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-w-0 flex-1 bg-transparent text-white outline-none"
+      >
+        {options.map((option) => (
+          <option key={option} className="bg-gray-950">{option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function HrNotificationCenter({ activeFilter, alerts, onFilter }) {
+  const filters = [
+    ["all", "All"],
+    ["high-risk", "High Risk"],
+    ["joining-soon", "Joining Soon"],
+    ["documents", "Documents Pending"],
+    ["learning", "Learning Pending"],
+    ["inactive", "Inactive Employees"],
+    ["department", "Department-wise"],
+  ];
+  const filteredAlerts = alerts.filter((alert) => activeFilter === "all" || alert.filter === activeFilter);
+
+  return (
+    <section className="rounded-xl border border-gray-800 bg-[#0b1020] p-4 shadow-lg shadow-black/10">
+      <p className="text-xs font-semibold uppercase tracking-wider text-brand-300">Notification Center</p>
+      <h2 className="mt-1 text-lg font-semibold text-white">HR alerts</h2>
+      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+        {filters.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onFilter(key)}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+              activeFilter === key ? "border-brand-700 bg-brand-700 text-white" : "border-gray-800 bg-gray-950/60 text-gray-400 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
+        {filteredAlerts.length === 0 ? (
+          <p className="rounded-lg border border-gray-800 bg-gray-950/50 px-4 py-5 text-sm text-gray-400">No alerts right now.</p>
+        ) : (
+          filteredAlerts.map((alert) => (
+            <div key={alert.id} className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold text-white">{alert.title}</p>
+                <Badge color={alert.color}>{alert.type}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-gray-400">{alert.detail}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SmartReminderEngine({ dueCount, onRun }) {
+  const rules = [
+    ["14 days before joining", "Welcome reminder and profile checklist"],
+    ["7 days before joining", "Document and learning reminder"],
+    ["3 days before joining", "Readiness warning for pending tasks"],
+    ["1 day before joining", "Final joining-day reminder"],
+  ];
+
+  return (
+    <section className="rounded-xl border border-gray-800 bg-[#0b1020] p-4 shadow-lg shadow-black/10">
+      <p className="text-xs font-semibold uppercase tracking-wider text-brand-300">Smart Reminder Engine</p>
+      <div className="mt-1 flex items-start justify-between gap-3">
+        <h2 className="text-lg font-semibold text-white">Automatic reminder rules</h2>
+        <Badge color={dueCount ? "yellow" : "green"}>{dueCount} due</Badge>
+      </div>
+      <div className="mt-4 space-y-2">
+        {rules.map(([when, message]) => (
+          <div key={when} className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+            <p className="text-sm font-semibold text-white">{when}</p>
+            <p className="mt-1 text-xs text-gray-400">{message}</p>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={onRun}
+        className="mt-4 w-full rounded-lg border border-amber-700/70 px-3 py-2 text-sm font-semibold text-amber-300 transition hover:bg-amber-950/40"
+      >
+        Run due reminders
+      </button>
+    </section>
+  );
+}
+
+function MiniMetric({ label, value }) {
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function joiningCountdown(candidate) {
+  if (candidate.joining_days_remaining === 0) return "Joining today";
+  if (candidate.joining_days_remaining > 0) {
+    return `${candidate.joining_days_remaining} day${candidate.joining_days_remaining === 1 ? "" : "s"} to go`;
+  }
+  if (candidate.joining_days_remaining < 0) return "Joined";
+  return candidate.joining_date || "Not set";
+}
+
+function learningPercent(candidate) {
+  return candidate.learning_completion ?? candidate.learning_progress ?? 0;
+}
+
+function daysSince(value) {
+  if (!value) return 99;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 99;
+  return Math.floor((Date.now() - date.getTime()) / 86400000);
+}
+
+function buildHrAlerts(candidates) {
+  const alerts = [];
+  candidates.forEach((candidate) => {
+    const learning = learningPercent(candidate);
+    const name = candidate.name || "Employee";
+    if ((candidate.document_completion ?? 0) > 0 && (candidate.document_completion ?? 0) < 100) {
+      alerts.push({ id: `${candidate.id}-docs`, filter: "documents", type: "Docs", color: "yellow", title: "Documents uploaded", detail: `${name} has documents waiting for HR review.` });
+    }
+    if ((candidate.document_completion ?? 0) === 0) {
+      alerts.push({ id: `${candidate.id}-docs-missing`, filter: "documents", type: "Docs", color: "red", title: "Documents pending", detail: `${name} has not submitted mandatory documents.` });
+    }
+    if (learning < 100) {
+      alerts.push({ id: `${candidate.id}-learning-pending`, filter: "learning", type: "Learning", color: "yellow", title: "Learning pending", detail: `${name} still has learning modules to complete.` });
+    }
+    if (learning >= 100) {
+      alerts.push({ id: `${candidate.id}-learning`, filter: "learning", type: "Learning", color: "green", title: "Learning completed", detail: `${name} completed all assigned learning modules.` });
+    }
+    if ((candidate.readiness_score ?? 0) >= 100) {
+      alerts.push({ id: `${candidate.id}-ready`, filter: "department", type: "Ready", color: "green", title: "Readiness reached 100%", detail: `${name} is ready for joining.` });
+    }
+    if (daysSince(candidate.updated_at || candidate.created_at) >= 4) {
+      alerts.push({ id: `${candidate.id}-inactive`, filter: "inactive", type: "Inactive", color: "red", title: "Employee inactive", detail: `${name} has no activity for several days.` });
+    }
+    if ((candidate.joining_days_remaining ?? 99) >= 0 && (candidate.joining_days_remaining ?? 99) <= 7) {
+      alerts.push({ id: `${candidate.id}-joining`, filter: "joining-soon", type: "Joining", color: "yellow", title: "Joining date approaching", detail: `${name} joins ${joiningCountdown(candidate).toLowerCase()}.` });
+    }
+    if (candidate.needs_attention) {
+      alerts.push({ id: `${candidate.id}-attention`, filter: "high-risk", type: "Attention", color: "red", title: "Employee needs attention", detail: `${name} has pending onboarding tasks near joining.` });
+    }
+  });
+  return alerts;
+}
+
+function isReminderDue(candidate) {
+  return [14, 7, 3, 1].includes(candidate.joining_days_remaining ?? -1) && (candidate.readiness_score ?? 0) < 100;
+}
+
+function paginationButtons(pagination) {
+  const pages = Math.max(1, pagination.pages || 1);
+  const current = Math.min(Math.max(1, pagination.page || 1), pages);
+  const middle = [current - 1, current, current + 1].filter((page) => page > 1 && page < pages);
+  return ["‹", 1, ...(middle[0] > 2 ? ["..."] : []), ...middle, ...(middle[middle.length - 1] < pages - 1 ? ["..."] : []), ...(pages > 1 ? [pages] : []), "›"];
+}
+
+function onboardingStatus(candidate) {
+  const readiness = candidate.readiness_score ?? 0;
+  if (readiness >= 100) {
+    return { label: "Ready", color: "green", dot: "●", tone: "ready" };
+  }
+  if (candidate.needs_attention || readiness < 30) {
+    return { label: "Critical", color: "red", dot: "●", tone: "critical" };
+  }
+  return { label: "In Progress", color: "yellow", dot: "●", tone: "progress" };
+}
+
+function CandidateRow({ candidate, checked, onDelete, onRemind, onSelect }) {
   const initials = candidate.name
     .split(" ")
     .map((part) => part[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const completed = candidate.readiness_score >= 90;
-  const notStarted = candidate.readiness_score < 30;
+  const completed = candidate.readiness_score >= 100;
+  const learning = candidate.learning_completion ?? candidate.learning_progress ?? 0;
+  const status = onboardingStatus(candidate);
+  const countdown =
+    candidate.joining_days_remaining === 0
+      ? "Joining today"
+      : candidate.joining_days_remaining > 0
+        ? `${candidate.joining_days_remaining}d left`
+        : "Joined";
 
   return (
-    <tr className="transition hover:bg-gray-900/60">
+    <tr className={`transition hover:bg-gray-900/60 ${candidate.needs_attention ? "bg-amber-950/20" : ""}`}>
+      <td className="px-5 py-4">
+        <input
+          checked={checked}
+          className="h-4 w-4 rounded border-gray-700 bg-gray-900 accent-brand-600"
+          onChange={() => onSelect(candidate.id)}
+          type="checkbox"
+        />
+      </td>
       <td className="px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-full bg-gray-800 text-xs font-semibold text-white">
@@ -400,7 +686,25 @@ function CandidateRow({ candidate, onDelete, onRemind }) {
         </div>
       </td>
       <td className="px-5 py-4 text-gray-200">{candidate.department}</td>
-      <td className="px-5 py-4 text-gray-200">{candidate.joining_date}</td>
+      <td className="px-5 py-4 text-gray-200">{candidate.location || "—"}</td>
+      <td className="px-5 py-4 text-gray-200">
+        <div>{candidate.joining_date}</div>
+        <div className={candidate.needs_attention ? "text-xs font-semibold text-amber-300" : "text-xs text-gray-500"}>
+          {countdown}
+        </div>
+      </td>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-3">
+          <ProgressBar value={candidate.profile_completion ?? 0} className="w-24" />
+          <span className="text-xs text-gray-400">{candidate.profile_completion ?? 0}%</span>
+        </div>
+      </td>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-3">
+          <ProgressBar value={learning} className="w-24" />
+          <span className="text-xs text-gray-400">{learning}%</span>
+        </div>
+      </td>
       <td className="px-5 py-4">
         <div className="flex items-center gap-3">
           <ProgressBar value={candidate.readiness_score} className="w-28" />
@@ -413,10 +717,22 @@ function CandidateRow({ candidate, onDelete, onRemind }) {
         </Badge>
       </td>
       <td className="px-5 py-4">
-        <Badge color={completed ? "green" : notStarted ? "gray" : "blue"}>
-          {completed ? "Completed" : notStarted ? "Not Started" : "In Progress"}
+        <div className="space-y-1">
+          <Badge color={candidate.notification_status === "Completed" ? "green" : candidate.notification_status === "Notified" ? "blue" : candidate.notification_status === "Pending Notification" ? "red" : "gray"}>
+            {candidate.notification_status ?? "On Track"}
+          </Badge>
+          {candidate.last_notified_at ? (
+            <p className="text-xs text-gray-500">Last: {new Date(candidate.last_notified_at).toLocaleDateString()}</p>
+          ) : null}
+        </div>
+      </td>
+      <td className="px-5 py-4">
+        <Badge color={status.color}>
+          <span className="mr-1.5">{status.dot}</span>
+          {status.label}
         </Badge>
       </td>
+      <td className="px-5 py-4 text-gray-300">{candidate.current_stage || candidate.hr_status || "Registered"}</td>
       <td className="px-5 py-4 text-right">
         <div className="flex justify-end gap-2">
           <Link
@@ -425,8 +741,13 @@ function CandidateRow({ candidate, onDelete, onRemind }) {
           >
             View
           </Link>
-          <button type="button" onClick={() => onRemind(candidate.name)} className="rounded-lg border border-gray-800 px-3 py-2 text-sm text-gray-300 hover:bg-gray-900">
-            Remind
+          <button
+            type="button"
+            onClick={() => onRemind(candidate)}
+            disabled={completed}
+            className="rounded-lg border border-amber-700/70 px-3 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-500"
+          >
+            Notify Employee
           </button>
           <button type="button" onClick={() => onDelete(candidate.id)} className="rounded-lg border border-red-900/70 px-3 py-2 text-sm text-red-300 hover:bg-red-950/40">
             Delete

@@ -1,10 +1,10 @@
 export function Button({ children, variant = "primary", loading, className = "", ...props }) {
-  const base = "inline-flex min-h-10 items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed";
+  const base = "inline-flex min-h-10 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0";
   const variants = {
-    primary:   "bg-brand-700 hover:bg-brand-600 text-white shadow-sm shadow-brand-950/30",
-    secondary: "bg-gray-900 hover:bg-gray-800 text-white border border-gray-700",
-    danger:    "bg-red-700 hover:bg-red-600 text-white",
-    ghost:     "text-gray-300 hover:text-white hover:bg-gray-900",
+    primary:   "bg-brand-700 hover:bg-brand-600 text-white shadow-[0_8px_20px_rgba(75,31,166,0.25)]",
+    secondary: "bg-white hover:bg-brand-50 text-slate-900 border border-slate-200 shadow-sm",
+    danger:    "bg-red-600 hover:bg-red-500 text-white shadow-[0_8px_20px_rgba(220,38,38,0.18)]",
+    ghost:     "text-slate-600 hover:text-brand-700 hover:bg-brand-50",
   };
   return (
     <button
@@ -20,13 +20,13 @@ export function Button({ children, variant = "primary", loading, className = "",
 export function Input({ label, error, className = "", ...props }) {
   return (
     <div className="space-y-2">
-      {label && <label className="block text-sm text-gray-200 font-medium">{label}</label>}
+      {label && <label className="block text-sm text-slate-700 font-semibold">{label}</label>}
       <input
         className={`
-          w-full bg-gray-950/80 border rounded-lg px-3.5 py-2.5 text-white text-sm
-          placeholder-gray-500 outline-none transition-colors
-          focus:border-brand-500 focus:ring-1 focus:ring-brand-500
-          ${error ? "border-red-500" : "border-gray-700"}
+          w-full bg-white border rounded-xl px-3.5 py-2.5 text-slate-900 text-sm
+          placeholder-slate-400 outline-none transition-all
+          focus:border-brand-600 focus:ring-4 focus:ring-brand-100
+          ${error ? "border-red-400" : "border-slate-200"}
           ${className}
         `}
         {...props}
@@ -38,7 +38,7 @@ export function Input({ label, error, className = "", ...props }) {
 
 export function Card({ children, className = "" }) {
   return (
-    <div className={`surface-panel rounded-lg p-5 ${className}`}>
+    <div className={`surface-panel rounded-2xl p-6 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] ${className}`}>
       {children}
     </div>
   );
@@ -46,9 +46,9 @@ export function Card({ children, className = "" }) {
 
 export function ProgressBar({ value = 0, color = "bg-brand-600", className = "" }) {
   return (
-    <div className={`w-full bg-gray-800 rounded-full h-2 overflow-hidden ${className}`}>
+    <div className={`w-full bg-slate-100 rounded-full h-2.5 overflow-hidden ${className}`}>
       <div
-        className={`${color} h-2 rounded-full transition-all duration-700 ease-out`}
+        className={`${color} h-2.5 rounded-full bg-gradient-to-r from-brand-700 to-brand-500 transition-all duration-700 ease-out`}
         style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
       />
     </div>
@@ -57,14 +57,14 @@ export function ProgressBar({ value = 0, color = "bg-brand-600", className = "" 
 
 export function Badge({ children, color = "gray" }) {
   const colors = {
-    gray:   "bg-gray-800/80 text-gray-300 border-gray-700",
-    green:  "bg-green-950/70 text-green-300 border-green-800/80",
-    yellow: "bg-yellow-950/70 text-yellow-300 border-yellow-800/80",
-    red:    "bg-red-950/70 text-red-300 border-red-800/80",
-    blue:   "bg-brand-950/70 text-brand-200 border-brand-800/80",
+    gray:   "bg-slate-100 text-slate-600 border-slate-200",
+    green:  "bg-emerald-50 text-emerald-700 border-emerald-200",
+    yellow: "bg-amber-50 text-amber-700 border-amber-200",
+    red:    "bg-red-50 text-red-700 border-red-200",
+    blue:   "bg-brand-50 text-brand-700 border-brand-100",
   };
   return (
-    <span className={`inline-flex items-center border px-2 py-0.5 rounded-md text-xs font-medium ${colors[color]}`}>
+    <span className={`inline-flex items-center border px-2.5 py-1 rounded-full text-xs font-semibold ${colors[color]}`}>
       {children}
     </span>
   );

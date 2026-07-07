@@ -11,6 +11,11 @@ const CATEGORY_THEME = {
   compliance: { accent: "#F59E0B", soft: "bg-amber-500/10", text: "text-amber-300", ring: "#F59E0B" },
   it: { accent: "#8B5CF6", soft: "bg-violet-500/10", text: "text-violet-300", ring: "#8B5CF6" },
   "role fit": { accent: "#06B6D4", soft: "bg-cyan-500/10", text: "text-cyan-300", ring: "#06B6D4" },
+  "department-based learning": { accent: "#2563EB", soft: "bg-blue-500/10", text: "text-blue-300", ring: "#2563EB" },
+  "role-based learning": { accent: "#7C3AED", soft: "bg-violet-500/10", text: "text-violet-300", ring: "#7C3AED" },
+  "plant-specific safety modules": { accent: "#DC2626", soft: "bg-rose-500/10", text: "text-rose-300", ring: "#DC2626" },
+  "company culture": { accent: "#059669", soft: "bg-emerald-500/10", text: "text-emerald-300", ring: "#059669" },
+  "code of conduct": { accent: "#D97706", soft: "bg-amber-500/10", text: "text-amber-300", ring: "#D97706" },
   default: { accent: "#6366F1", soft: "bg-indigo-500/10", text: "text-indigo-300", ring: "#6366F1" },
 };
 
@@ -30,6 +35,7 @@ const isVideoModule = (module) =>
 
 export default function Learning() {
   const [modules, setModules] = useState([]);
+  const [activeTrack, setActiveTrack] = useState("all");
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
   const [error, setError] = useState("");
@@ -66,23 +72,66 @@ export default function Learning() {
     const average = modules.length
       ? Math.round(modules.reduce((sum, m) => sum + (m.progress ?? 0), 0) / modules.length)
       : 0;
-    return { completed, required, average };
+    const certificates = modules.filter((m) => m.certificate_available && (m.progress ?? 0) >= 100).length;
+    const quizzes = modules.filter((m) => m.quiz_available).length;
+    return { completed, required, average, certificates, quizzes };
   }, [modules]);
+
+  const trackTabs = useMemo(() => {
+    const tracks = [
+      { id: "all", label: "All assigned" },
+      { id: "department", label: "Department" },
+      { id: "role", label: "Role" },
+      { id: "safety", label: "Plant safety" },
+      { id: "culture", label: "Culture" },
+      { id: "conduct", label: "Conduct" },
+    ];
+    return tracks.filter((track) => track.id === "all" || modules.some((module) => module.track === track.id));
+  }, [modules]);
+
+  const filteredModules = useMemo(
+    () => activeTrack === "all" ? modules : modules.filter((module) => module.track === activeTrack),
+    [activeTrack, modules]
+  );
 
   if (loading) return <LoadingSpinner />;
 
   return (
-    <div className="max-w-6xl space-y-8">
+    <div className="w-full space-y-8">
       {/* Header with overall progress ring — the one signature element */}
       <div className="flex flex-col gap-6 rounded-2xl bg-gradient-to-br from-indigo-950 via-gray-900 to-gray-900 p-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Learning Center</p>
-          <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Learning Modules</h2>
+          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Personalized Learning Hub</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Assigned for your department, role, and plant</h2>
           <p className="mt-1 text-sm text-gray-400">
-            {stats.completed}/{modules.length} completed · {stats.required} required
+            {stats.completed}/{modules.length} completed · {stats.required} required · {stats.quizzes} quizzes · {stats.certificates} certificates earned
           </p>
         </div>
         <ProgressRing percent={stats.average} />
+      </div>
+
+      <section className="grid gap-3 md:grid-cols-4">
+        <HubStat label="Department-based" value={modules.filter((m) => m.track === "department").length} />
+        <HubStat label="Role-based" value={modules.filter((m) => m.track === "role").length} />
+        <HubStat label="Plant safety" value={modules.filter((m) => m.track === "safety").length} />
+        <HubStat label="Certificates" value={stats.certificates} />
+      </section>
+
+      <div className="flex flex-wrap gap-2">
+        {trackTabs.map((track) => (
+          <button
+            key={track.id}
+            type="button"
+            onClick={() => setActiveTrack(track.id)}
+            className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+              activeTrack === track.id
+                ? "border-indigo-600 bg-indigo-600 text-white"
+                : "border-gray-800 bg-gray-950/60 text-gray-400 hover:text-white"
+            }`}
+          >
+            {track.label}
+          </button>
+        ))}
       </div>
 
       {error && (
@@ -91,11 +140,11 @@ export default function Learning() {
         </div>
       )}
 
-      {modules.length === 0 ? (
+      {filteredModules.length === 0 ? (
         <p className="text-sm text-gray-500">No learning modules yet.</p>
       ) : (
-        <section className="grid gap-4 md:grid-cols-2">
-          {modules.map((module) =>
+        <section className="grid max-h-[72vh] gap-4 overflow-y-auto pr-1 md:grid-cols-2 2xl:grid-cols-3">
+          {filteredModules.map((module) =>
             isVideoModule(module) ? (
               <VideoModuleCard
                 key={module.id}
@@ -109,6 +158,7 @@ export default function Learning() {
                 module={module}
                 updating={updating === module.id}
                 onToggleComplete={() => updateModuleProgress(module.id, 100)}
+                onQuizComplete={() => updateModuleProgress(module.id, 100)}
               />
             )
           )}
@@ -132,6 +182,15 @@ export default function Learning() {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function HubStat({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+      <p className="text-sm text-gray-400">{label}</p>
+      <strong className="mt-2 block text-2xl font-semibold text-white">{value}</strong>
     </div>
   );
 }
@@ -220,7 +279,10 @@ function VideoModuleCard({ module, onProgress, updating }) {
           <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>
             {module.category || "Video"}
           </span>
-          {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+          <div className="flex flex-wrap justify-end gap-2">
+            {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+            {module.audience ? <Badge color="gray">{module.audience}</Badge> : null}
+          </div>
         </div>
         <h3 className="mt-2 text-base font-semibold text-white">{module.title}</h3>
         {module.description ? (
@@ -245,13 +307,20 @@ function VideoModuleCard({ module, onProgress, updating }) {
             <span className="text-xs text-gray-500">Saving…</span>
           ) : null}
         </div>
+        {module.certificate_available ? (
+          <div className="mt-3">
+            <span className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isComplete ? "border-emerald-700 bg-emerald-50 text-emerald-700" : "border-gray-800 text-gray-500"}`}>
+              {isComplete ? "Certificate earned" : "Certificate after completion"}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
 // --- Document / PDF module: manual "mark as reviewed" checkbox ---------
-function DocModuleCard({ module, onToggleComplete, updating }) {
+function DocModuleCard({ module, onQuizComplete, onToggleComplete, updating }) {
   const theme = themeFor(module.category);
   const isComplete = (module.progress ?? 0) >= 100;
 
@@ -284,14 +353,17 @@ function DocModuleCard({ module, onToggleComplete, updating }) {
           <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>
             {module.category || "Document"}
           </span>
-          {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+          <div className="flex flex-wrap justify-end gap-2">
+            {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+            {module.audience ? <Badge color="gray">{module.audience}</Badge> : null}
+          </div>
         </div>
         <h3 className="mt-2 text-base font-semibold text-white">{module.title}</h3>
         {module.description ? (
           <p className="mt-1 text-sm leading-6 text-gray-400">{module.description}</p>
         ) : null}
 
-        <div className="mt-3 flex items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           {module.file_url ? (
             <a
               className="text-sm font-medium text-indigo-400 hover:text-indigo-300"
@@ -305,6 +377,24 @@ function DocModuleCard({ module, onToggleComplete, updating }) {
           <span className="text-xs text-gray-500">
             {isComplete ? "Marked reviewed" : updating ? "Saving…" : "Check the box once reviewed"}
           </span>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {module.quiz_available ? (
+            <button
+              type="button"
+              disabled={isComplete || updating}
+              onClick={onQuizComplete}
+              className="rounded-lg border border-gray-800 px-3 py-2 text-sm font-semibold text-gray-300 transition hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isComplete ? "Quiz passed" : "Take quiz"}
+            </button>
+          ) : null}
+          {module.certificate_available ? (
+            <span className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isComplete ? "border-emerald-700 bg-emerald-50 text-emerald-700" : "border-gray-800 text-gray-500"}`}>
+              {isComplete ? "Certificate earned" : "Certificate after completion"}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

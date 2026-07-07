@@ -19,6 +19,10 @@ def _collection():
     collection.create_index([("email", ASCENDING)], unique=True)
     collection.create_index([("employee_id", ASCENDING)], unique=True)
     collection.create_index([("department", ASCENDING), ("joining_date", ASCENDING)])
+    collection.create_index([("location", ASCENDING), ("joining_date", ASCENDING)])
+    collection.create_index([("readiness_score", DESCENDING)])
+    collection.create_index([("document_completion", ASCENDING)])
+    collection.create_index([("current_stage", ASCENDING)])
     collection.create_index([("status", ASCENDING)])
     return collection
 
@@ -108,7 +112,9 @@ def _public(candidate: Dict[str, Any]) -> Dict[str, Any]:
 def _query_filter(
     search: Optional[str] = None,
     department: Optional[str] = None,
+    location: Optional[str] = None,
     status: Optional[str] = None,
+    joining_window: Optional[str] = None,
     readiness_min: Optional[int] = None,
     readiness_max: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -119,13 +125,30 @@ def _query_filter(
           {"employee_id": {"$regex": search, "$options": "i"}},
           {"email": {"$regex": search, "$options": "i"}},
           {"department": {"$regex": search, "$options": "i"}},
+          {"role": {"$regex": search, "$options": "i"}},
+          {"designation": {"$regex": search, "$options": "i"}},
+          {"location": {"$regex": search, "$options": "i"}},
+          {"joining_date": {"$regex": search, "$options": "i"}},
+          {"current_stage": {"$regex": search, "$options": "i"}},
           {"hr_status": {"$regex": search, "$options": "i"}},
           {"phone": {"$regex": search, "$options": "i"}},
       ]
     if department:
         query["department"] = department
+    if location:
+        query["location"] = location
     if status:
-        query["hr_status"] = status
+        query["$or"] = [{"hr_status": status}, {"current_stage": status}]
+    if joining_window and joining_window != "all":
+        today = datetime.now(timezone.utc).date()
+        windows = {
+            "today": (today, today),
+            "week": (today, today + timedelta(days=7)),
+            "month": (today, today + timedelta(days=30)),
+        }
+        if joining_window in windows:
+            start, end = windows[joining_window]
+            query["joining_date"] = {"$gte": start.isoformat(), "$lte": end.isoformat()}
     readiness: Dict[str, int] = {}
     if readiness_min is not None:
         readiness["$gte"] = readiness_min
@@ -139,7 +162,9 @@ def _query_filter(
 def list_candidates(
     search: Optional[str] = None,
     department: Optional[str] = None,
+    location: Optional[str] = None,
     status: Optional[str] = None,
+    joining_window: Optional[str] = None,
     readiness_min: Optional[int] = None,
     readiness_max: Optional[int] = None,
     sort: str = "joining_date",
@@ -153,10 +178,10 @@ def list_candidates(
     _seed_candidates_if_empty(collection)
 
     page = max(page, 1)
-    limit = min(max(limit, 1), 100)
-    query = _query_filter(search, department, status, readiness_min, readiness_max)
+    limit = min(max(limit, 1), 1000)
+    query = _query_filter(search, department, location, status, joining_window, readiness_min, readiness_max)
     direction = DESCENDING if order.lower() == "desc" else ASCENDING
-    sort_key = sort if sort in {"joining_date", "name", "department", "readiness_score", "document_completion"} else "joining_date"
+    sort_key = sort if sort in {"joining_date", "name", "department", "location", "readiness_score", "document_completion"} else "joining_date"
 
     total = collection.count_documents(query)
     cursor = (
@@ -206,10 +231,14 @@ def create_candidate(payload: Dict[str, Any]) -> Dict[str, Any]:
         "manager_status": payload.get("manager_status", "Pending"),
         "learning_progress": payload.get("learning_progress", 0),
         "document_completion": payload.get("document_completion", 0),
-        "profile_completion": payload.get("profile_completion", 70),
+        "profile_completion": payload.get("profile_completion", 0),
         "readiness_score": payload.get("readiness_score", 0),
         "current_stage": payload.get("current_stage", "Registered"),
         "last_activity": "Candidate registered",
+        "notification_status": payload.get("notification_status", "On Track"),
+        "last_notified_at": payload.get("last_notified_at"),
+        "notification_history": payload.get("notification_history", []),
+        "welcome_kit_assignment": payload.get("welcome_kit_assignment", {}),
         "created_at": now,
         "updated_at": now,
     }
@@ -235,6 +264,36 @@ def delete_candidate(candidate_id: str) -> bool:
     return result.deleted_count > 0
 
 
+def notify_candidate(candidate_id: str, message: str) -> Optional[Dict[str, Any]]:
+    collection = _collection()
+    if collection is None:
+        raise RuntimeError("MongoDB is not available")
+    candidate = collection.find_one({"id": candidate_id})
+    if not candidate:
+        return None
+
+    now = datetime.now(timezone.utc)
+    history_entry = {
+        "id": f"notify_{uuid4().hex[:10]}",
+        "sent_at": now.isoformat(),
+        "channel": "in_app,email",
+        "message": message,
+    }
+    collection.update_one(
+        {"id": candidate_id},
+        {
+            "$set": {
+                "notification_status": "Notified",
+                "last_notified_at": now.isoformat(),
+                "last_activity": "Reminder sent by HR",
+                "updated_at": now,
+            },
+            "$push": {"notification_history": history_entry},
+        },
+    )
+    return get_candidate(candidate_id)
+
+
 def analytics() -> Dict[str, Any]:
     collection = _collection()
     if collection is None:
@@ -248,18 +307,56 @@ def analytics() -> Dict[str, Any]:
             "avgDocumentCompletion": 0,
             "avgLearningCompletion": 0,
             "avgReadinessScore": 0,
+            "pendingDocuments": 0,
+            "learningPending": 0,
+            "readyCandidates": 0,
+            "joiningToday": 0,
+            "joiningThisWeek": 0,
+            "upcomingJoiners": 0,
+            "highRiskJoiners": 0,
+            "attentionRequired": 0,
+            "recentlyRegistered": 0,
         }
 
     def avg(key: str) -> int:
         return round(sum(candidate.get(key, 0) for candidate in candidates) / len(candidates))
 
+    today = datetime.now(timezone.utc).date()
+
+    def joining_days(candidate: Dict[str, Any]) -> int:
+        value = candidate.get("joining_date")
+        if not value:
+            return 999
+        try:
+            joining_date = datetime.fromisoformat(str(value)[:10]).date()
+        except ValueError:
+            return 999
+        return (joining_date - today).days
+
+    def learning_completion(candidate: Dict[str, Any]) -> int:
+        return candidate.get("learning_completion", candidate.get("learning_progress", 0))
+
+    def in_joining_week(candidate: Dict[str, Any]) -> bool:
+        days_remaining = joining_days(candidate)
+        return 0 <= days_remaining <= 7
+
     return {
         "totalCandidates": len(candidates),
         "avgProfileCompletion": avg("profile_completion"),
         "avgDocumentCompletion": avg("document_completion"),
-        "avgLearningCompletion": avg("learning_progress"),
+        "avgLearningCompletion": round(sum(learning_completion(candidate) for candidate in candidates) / len(candidates)),
         "avgReadinessScore": avg("readiness_score"),
         "pendingDocuments": sum(1 for candidate in candidates if candidate.get("document_completion", 0) < 100),
+        "learningPending": sum(1 for candidate in candidates if learning_completion(candidate) < 100),
         "readyCandidates": sum(1 for candidate in candidates if candidate.get("readiness_score", 0) >= 90),
+        "joiningToday": sum(1 for candidate in candidates if joining_days(candidate) == 0),
+        "joiningThisWeek": sum(1 for candidate in candidates if in_joining_week(candidate)),
+        "upcomingJoiners": sum(1 for candidate in candidates if 0 <= joining_days(candidate) <= 30),
+        "highRiskJoiners": sum(
+            1 for candidate in candidates if in_joining_week(candidate) and candidate.get("readiness_score", 0) < 60
+        ),
+        "attentionRequired": sum(
+            1 for candidate in candidates if in_joining_week(candidate) and candidate.get("readiness_score", 0) < 100
+        ),
         "recentlyRegistered": sum(1 for candidate in candidates if candidate.get("current_stage") == "Registered"),
     }
