@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { notificationApi } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
@@ -23,21 +24,23 @@ const typeLabels = {
 };
 
 export default function Notifications() {
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [activeType, setActiveType] = useState("all");
   const [readFilter, setReadFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const candidateId = user?.id ?? user?.employeeId ?? user?.employee_id ?? "demo";
 
   const load = () =>
     notificationApi
-      .list()
+      .list({}, candidateId)
       .then((res) => setNotifications(res.data?.notifications ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
 
   useEffect(() => {
     load();
-  }, []);
+  }, [candidateId]);
 
   const filtered = useMemo(
     () => notifications

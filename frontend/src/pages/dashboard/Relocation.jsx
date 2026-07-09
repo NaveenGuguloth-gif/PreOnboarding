@@ -141,6 +141,33 @@ const insightData = {
   ],
 };
 
+const companyMapHighlights = [
+  {
+    id: "entry-route",
+    label: "Entry Route",
+    short: "5-10",
+    type: "Arrival",
+    description: "Use the numbered road path to orient yourself from the approach road toward the internal plant blocks.",
+    detail: "Follow HR or security instructions at entry, then move toward the assigned reporting point.",
+  },
+  {
+    id: "office-blocks",
+    label: "Office and Shop Blocks",
+    short: "A-J",
+    type: "Work areas",
+    description: "The map marks A, C, D, E, H, J, P.E., and nearby shop blocks so employees can understand the plant layout.",
+    detail: "Check your reporting instructions for the exact block before moving inside the plant.",
+  },
+  {
+    id: "support-facilities",
+    label: "Support Facilities",
+    short: "SUP",
+    type: "Facilities",
+    description: "The layout includes plant support areas such as canteen, utilities, stores, material gate, and maintenance zones.",
+    detail: "Use these landmarks when asking security, HR, or your buddy for directions.",
+  },
+];
+
 const generatedResourcesFor = (location) => {
   const area = location?.trim() || "your preferred area";
   return [
@@ -265,6 +292,7 @@ export default function Relocation() {
   const [aiResources, setAiResources] = useState([]);
   const [aiSource, setAiSource] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [selectedMapPointId, setSelectedMapPointId] = useState("entry-route");
 
   useEffect(() => {
     relocationApi
@@ -336,6 +364,12 @@ export default function Relocation() {
         <Badge color="blue">{resources.length} nearby resources</Badge>
       </div>
 
+      <CompanyMapGuide
+        points={companyMapHighlights}
+        selectedPointId={selectedMapPointId}
+        onSelectPoint={setSelectedMapPointId}
+      />
+
       <SmartRelocationFinder
         location={data.location}
         relocationForm={relocationForm}
@@ -359,6 +393,82 @@ export default function Relocation() {
         )}
       </section>
     </div>
+  );
+}
+
+function CompanyMapGuide({ onSelectPoint, points, selectedPointId }) {
+  const selectedPoint = points.find((point) => point.id === selectedPointId) ?? points[0];
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
+      <div className="grid gap-0 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.7fr)]">
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <Badge color="blue">Company map</Badge>
+              <h3 className="mt-3 text-xl font-semibold text-white">Understand the plant before Day 1</h3>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-400">
+                Review the Tata Motors Pune layout to understand blocks, road numbers, gates, facilities, and orientation before arriving.
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2 text-sm text-gray-400">
+              <span className="font-semibold text-white">Tip:</span> Match the numbered circles with signboards on site.
+            </div>
+          </div>
+
+          <div className="mt-5 overflow-auto rounded-xl border border-gray-800 bg-white">
+            <div className="min-w-[620px]">
+              <img
+                src="/assets/tata-motors-pune-layout.jpeg"
+                alt="Tata Motors Pune plant layout map"
+                className="h-auto w-full"
+              />
+            </div>
+          </div>
+        </div>
+
+        <aside className="border-t border-gray-800 bg-gray-950/60 p-5 xl:border-l xl:border-t-0">
+          <div className="rounded-xl border border-gray-800 bg-gray-900/80 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-400">{selectedPoint.type}</p>
+                <h4 className="mt-1 text-lg font-semibold text-white">{selectedPoint.label}</h4>
+              </div>
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-indigo-500/10 text-sm font-bold text-indigo-300">
+                {selectedPoint.short}
+              </span>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-gray-300">{selectedPoint.description}</p>
+            <p className="mt-3 rounded-lg border border-gray-800 bg-gray-950/70 p-3 text-sm leading-6 text-gray-400">
+              {selectedPoint.detail}
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {points.map((point) => (
+              <button
+                key={point.id}
+                type="button"
+                onClick={() => onSelectPoint(point.id)}
+                className={`flex min-h-12 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  point.id === selectedPoint.id
+                    ? "border-indigo-500 bg-indigo-500/10"
+                    : "border-gray-800 bg-gray-900/70 hover:border-gray-700"
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-white">{point.label}</span>
+                  <span className="block truncate text-xs text-gray-500">{point.type}</span>
+                </span>
+                <span className="shrink-0 rounded-full border border-gray-800 px-2 py-1 text-xs font-semibold text-gray-400">
+                  {point.short}
+                </span>
+              </button>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </section>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { learningApi } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
@@ -34,22 +35,24 @@ const isVideoModule = (module) =>
   module.type === "video" || Boolean(module.video_url) || /\.(mp4|webm|mov)$/i.test(module.file_url || "");
 
 export default function Learning() {
+  const { user } = useAuth();
   const [modules, setModules] = useState([]);
   const [activeTrack, setActiveTrack] = useState("all");
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
   const [error, setError] = useState("");
+  const candidateId = user?.id ?? user?.employeeId ?? user?.employee_id ?? "demo";
 
   const load = () =>
     learningApi
-      .listModules()
+      .listModules(candidateId)
       .then((r) => setModules(r.data?.modules ?? r.data ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
 
   useEffect(() => {
     load();
-  }, []);
+  }, [candidateId]);
 
   // Shared progress writer — used both for the "mark reviewed" checkbox
   // and for incremental video watch-time updates.
@@ -57,7 +60,7 @@ export default function Learning() {
     setUpdating(moduleId);
     setError("");
     try {
-      await learningApi.updateProgress({ moduleId, progress });
+      await learningApi.updateProgress({ moduleId, progress }, candidateId);
       setModules((prev) => prev.map((m) => (m.id === moduleId ? { ...m, progress } : m)));
     } catch {
       setError("Failed to update progress.");

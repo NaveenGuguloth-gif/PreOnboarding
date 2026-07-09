@@ -29,8 +29,6 @@ export default function HrDashboard() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sortBy, setSortBy] = useState("Newest");
   const [joiningWindow, setJoiningWindow] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("All");
@@ -43,11 +41,6 @@ export default function HrDashboard() {
   const [pagination, setPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
   const [selectedIds, setSelectedIds] = useState([]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query), 350);
-    return () => window.clearTimeout(timer);
-  }, [query]);
-
   const loadDashboard = () => {
     const sortMap = {
       Newest: "joining_date",
@@ -59,7 +52,6 @@ export default function HrDashboard() {
 
     return Promise.all([
       hrApi.listCandidates({
-        search: debouncedQuery || undefined,
         sort: sortMap[sortBy] ?? "joining_date",
         order: sortBy === "Newest" ? "desc" : "asc",
         joining_window: joiningWindow,
@@ -83,17 +75,17 @@ export default function HrDashboard() {
 
   useEffect(() => {
     loadDashboard();
-  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
+  }, [sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
 
   useEffect(() => {
     setPagination((current) => ({ ...current, page: 1 }));
     setSelectedIds([]);
-  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter]);
+  }, [sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter]);
 
   useEffect(() => {
     const timer = window.setInterval(loadDashboard, 30000);
     return () => window.clearInterval(timer);
-  }, [debouncedQuery, sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
+  }, [sortBy, joiningWindow, departmentFilter, locationFilter, stageFilter, pagination.page, pagination.limit]);
 
   const filteredCandidates = candidates;
 
@@ -199,21 +191,6 @@ export default function HrDashboard() {
 
   return (
     <div className="max-w-[1600px] space-y-6">
-      <section>
-        <div className="relative">
-          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">Search</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="h-14 w-full rounded-lg border border-gray-800 bg-gray-950/60 pl-20 pr-14 text-sm text-white outline-none transition focus:border-brand-600 focus:ring-1 focus:ring-brand-600"
-            placeholder="by name, employee ID, email, department, role, joining date, location, or readiness..."
-          />
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md border border-gray-800 px-2 py-1 text-xs text-gray-500">
-            ⌘ K
-          </span>
-        </div>
-      </section>
-
       <section className="grid gap-3 rounded-xl border border-gray-800 bg-[#0b1020] p-4 lg:grid-cols-[1fr_220px_220px] 2xl:grid-cols-[1fr_220px_220px_220px_180px]">
         <div className="flex flex-wrap gap-2">
           {[

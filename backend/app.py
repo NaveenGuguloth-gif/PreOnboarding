@@ -31,6 +31,8 @@ from backend.DemoApp_service import (
     generate_chat_title,
 )
 
+from backend import preonboarding_repository
+
 from backend.db_manager import (
     get_user_thread_list,
     get_thread_by_id,
@@ -924,6 +926,25 @@ def _current_auth_user(access_token: str = Cookie(None)):
     return user
 
 
+def _require_role(required_role: str):
+    def dependency(user: Dict[str, Any] = Depends(_current_auth_user)):
+        if user.get("role") != required_role:
+            raise HTTPException(status_code=403, detail=f"{required_role.upper()} access required")
+        return user
+    return dependency
+
+
+def _auth_user_id(user: Dict[str, Any]) -> str:
+    return str(user.get("_id") or user.get("id") or "")
+
+
+def _assert_candidate_access(candidate_id: str, user: Dict[str, Any]):
+    if user.get("role") == "hr":
+        return
+    if candidate_id != _auth_user_id(user):
+        raise HTTPException(status_code=403, detail="You can access only your own onboarding data")
+
+
 @app.get("/api/candidate/me")
 def get_candidate_me(user: Dict[str, Any] = Depends(_current_auth_user)):
     return {"user": _public_auth_user(user)}
@@ -933,33 +954,45 @@ def get_candidate_me(user: Dict[str, Any] = Depends(_current_auth_user)):
 def get_candidate_metrics(user: Dict[str, Any] = Depends(_current_auth_user)):
     candidate_id = str(user.get("_id") or user.get("id"))
     try:
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True)
         candidate = hr_repository.get_candidate(candidate_id) or {}
-        documents = preonboarding_repository.documents_for_candidate(candidate_id)
-        modules = preonboarding_repository.learning_modules_for_employee(candidate_id)
     except RuntimeError as exc:
         _mongo_unavailable_response(exc)
 
-    document_completion = round(
-        (sum(1 for doc in documents if doc.get("status") != "missing") / len(documents)) * 100
-    ) if documents else 0
-    learning_completion = round(
-        sum(module.get("progress", 0) for module in modules) / len(modules)
-    ) if modules else 0
-    profile_completion = max(0, min(100, int(candidate.get("profile_completion", 0) or 0)))
-    readiness_score = round((profile_completion + document_completion + learning_completion) / 3)
-    joining_date = candidate.get("joining_date") or user.get("joining_date")
+    joining_date = status_doc.get("joiningDate") or candidate.get("joining_date") or user.get("joining_date")
     days_remaining = 0
     if joining_date:
         days_remaining = max(0, (datetime.fromisoformat(joining_date).date() - datetime.now(timezone.utc).date()).days)
     return {
-        "profileCompletion": profile_completion,
-        "documentCompletion": document_completion,
-        "learningCompletion": learning_completion,
-        "readinessScore": readiness_score,
+        **status_doc,
+        "profileCompletion": status_doc.get("profileCompletion", 0),
+        "documentCompletion": status_doc.get("documentCompletion", 0),
+        "learningCompletion": status_doc.get("learningCompletion", 0),
+        "readinessScore": status_doc.get("readinessScore", 0),
         "daysRemaining": days_remaining,
         "teamAssignment": candidate.get("team_assignment"),
-        "welcomeKitAssignment": candidate.get("welcome_kit_assignment", {}),
+        "welcomeKitAssignment": (status_doc.get("welcomeKit") or {}).get("items", {}),
     }
+
+
+@app.patch("/api/candidate/profile")
+def update_candidate_profile(data: Dict[str, Any], user: Dict[str, Any] = Depends(_current_auth_user)):
+    candidate_id = str(user.get("_id") or user.get("id"))
+    profile_sections = data.get("profileSections") or data.get("profile_sections")
+    update: Dict[str, Any] = {k: v for k, v in data.items() if k not in {"profileSections", "profile_sections"}}
+    if profile_sections:
+        completed = sum(1 for value in profile_sections.values() if value)
+        total = max(1, len(profile_sections))
+        update["profile_sections"] = profile_sections
+        update["profile_completion"] = round((completed / total) * 100)
+    elif "profile_completion" not in update:
+        update["profile_completion"] = 100
+    try:
+        candidate = hr_repository.update_candidate(candidate_id, update)
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True, last_activity="Profile updated")
+    except RuntimeError as exc:
+        _mongo_unavailable_response(exc)
+    return {"candidate": candidate, "status": status_doc}
 
 
 @app.get("/api/candidate/peers")
@@ -1037,6 +1070,7 @@ class CandidateUpdateData(BaseModel):
     last_activity: Optional[str] = None
     team_assignment: Optional[Dict[str, Any]] = None
     welcome_kit_assignment: Optional[Dict[str, Any]] = None
+    welcomeKit: Optional[Dict[str, Any]] = None
 
 
 def _mongo_unavailable_response(exc: Exception):
@@ -1060,6 +1094,7 @@ def list_hr_candidates(
     order: str = Query("desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
+    user: Dict[str, Any] = Depends(_require_role("hr")),
 ):
     try:
         return hr_repository.list_candidates(
@@ -1080,7 +1115,7 @@ def list_hr_candidates(
 
 
 @app.get("/api/hr/analytics")
-def get_hr_analytics():
+def get_hr_analytics(user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return hr_repository.analytics()
     except RuntimeError as exc:
@@ -1088,39 +1123,99 @@ def get_hr_analytics():
 
 
 @app.get("/api/hr/candidates/{candidate_id}")
-def get_hr_candidate(candidate_id: str):
+def get_hr_candidate(candidate_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         candidate = hr_repository.get_candidate(candidate_id)
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True) if candidate else {}
     except RuntimeError as exc:
         _mongo_unavailable_response(exc)
 
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return {"candidate": candidate}
+    candidate = {**candidate, **status_doc}
+    return {
+        "candidate": candidate,
+        "documents": status_doc.get("documents", []),
+        "learning": status_doc.get("learning", []),
+        "tasks": status_doc.get("tasks", []),
+        "notifications": status_doc.get("notifications", []),
+        "onboardingStatus": status_doc,
+    }
+
+
+@app.get("/api/onboarding/status/{candidate_id}")
+def get_onboarding_status(candidate_id: str, user: Dict[str, Any] = Depends(_current_auth_user)):
+    _assert_candidate_access(candidate_id, user)
+    try:
+        candidate = hr_repository.get_candidate(candidate_id)
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        return {"status": preonboarding_repository.build_onboarding_status(candidate_id, persist=True)}
+    except RuntimeError as exc:
+        _mongo_unavailable_response(exc)
+
+
+@app.get("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/download")
+def download_hr_candidate_document(
+    candidate_id: str,
+    requirement_id: str,
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    _assert_candidate_access(candidate_id, user)
+    try:
+        submission = preonboarding_repository.candidate_document_file(candidate_id, requirement_id)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not submission or not submission.get("file_path") or not Path(submission["file_path"]).exists():
+        raise HTTPException(status_code=404, detail="Document file not found")
+    preonboarding_repository.audit(_auth_user_id(user), "view", "document", requirement_id, {"candidate_id": candidate_id})
+    return FileResponse(
+        submission["file_path"],
+        filename=submission.get("file_name") or "document",
+        media_type=submission.get("content_type") or "application/octet-stream",
+    )
 
 
 @app.post("/api/hr/candidates", status_code=201)
-def create_hr_candidate(data: CandidateCreateData):
+def create_hr_candidate(data: CandidateCreateData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
-        return {"candidate": hr_repository.create_candidate(data.dict())}
+        candidate = hr_repository.create_candidate(data.dict())
+        status_doc = preonboarding_repository.build_onboarding_status(candidate["id"], persist=True)
+        return {"candidate": {**candidate, **status_doc}}
     except RuntimeError as exc:
         _mongo_unavailable_response(exc)
 
 
 @app.patch("/api/hr/candidates/{candidate_id}")
-def update_hr_candidate(candidate_id: str, data: CandidateUpdateData):
+def update_hr_candidate(candidate_id: str, data: CandidateUpdateData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
-        candidate = hr_repository.update_candidate(candidate_id, data.dict(exclude_unset=True))
+        payload = data.dict(exclude_unset=True)
+        candidate = hr_repository.update_candidate(candidate_id, payload)
+        if "welcome_kit_assignment" in payload or "welcomeKit" in payload:
+            preonboarding_repository.audit(
+                _auth_user_id(user),
+                "update",
+                "welcome_kit",
+                candidate_id,
+                payload.get("welcomeKit") or payload.get("welcome_kit_assignment") or {},
+            )
+        else:
+            preonboarding_repository.audit(_auth_user_id(user), "update", "candidate", candidate_id, payload)
+        status_doc = preonboarding_repository.build_onboarding_status(
+            candidate_id,
+            persist=True,
+            last_activity=payload.get("last_activity", "Candidate updated"),
+        ) if candidate else {}
     except RuntimeError as exc:
         _mongo_unavailable_response(exc)
 
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return {"candidate": candidate}
+    return {"candidate": {**candidate, **status_doc}}
 
 
 @app.delete("/api/hr/candidates/{candidate_id}")
-def delete_hr_candidate(candidate_id: str):
+def delete_hr_candidate(candidate_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         deleted = hr_repository.delete_candidate(candidate_id)
     except RuntimeError as exc:
@@ -1138,7 +1233,7 @@ REMINDER_MESSAGE = (
 
 
 @app.post("/api/hr/candidates/{candidate_id}/notify")
-def notify_hr_candidate(candidate_id: str):
+def notify_hr_candidate(candidate_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         candidate = hr_repository.notify_candidate(candidate_id, REMINDER_MESSAGE)
         if not candidate:
@@ -1157,7 +1252,6 @@ def notify_hr_candidate(candidate_id: str):
 # -----------------------------
 # Pre-Onboarding Enterprise APIs
 # -----------------------------
-from backend import preonboarding_repository
 
 
 class DepartmentData(BaseModel):
@@ -1237,7 +1331,7 @@ def _enterprise_unavailable_response(exc: Exception):
 
 
 @app.get("/api/hr/departments")
-def list_departments():
+def list_departments(user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return {"departments": preonboarding_repository.list_departments()}
     except RuntimeError as exc:
@@ -1245,7 +1339,7 @@ def list_departments():
 
 
 @app.post("/api/hr/departments", status_code=201)
-def create_department(data: DepartmentData):
+def create_department(data: DepartmentData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return {"department": preonboarding_repository.create_department(data.dict())}
     except RuntimeError as exc:
@@ -1253,7 +1347,7 @@ def create_department(data: DepartmentData):
 
 
 @app.patch("/api/hr/departments/{department_id}")
-def update_department(department_id: str, data: DepartmentData):
+def update_department(department_id: str, data: DepartmentData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         department = preonboarding_repository.update_department(department_id, data.dict(exclude_unset=True))
     except RuntimeError as exc:
@@ -1264,7 +1358,7 @@ def update_department(department_id: str, data: DepartmentData):
 
 
 @app.delete("/api/hr/departments/{department_id}")
-def delete_department(department_id: str):
+def delete_department(department_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         deleted = preonboarding_repository.delete_department(department_id)
     except RuntimeError as exc:
@@ -1275,7 +1369,7 @@ def delete_department(department_id: str):
 
 
 @app.get("/api/hr/departments/{department_name}/candidates")
-def list_department_candidates(department_name: str):
+def list_department_candidates(department_name: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return hr_repository.list_candidates(department=department_name)
     except RuntimeError as exc:
@@ -1283,7 +1377,11 @@ def list_department_candidates(department_name: str):
 
 
 @app.get("/api/hr/tasks")
-def list_tasks(department: Optional[str] = Query(None), status: Optional[str] = Query(None)):
+def list_tasks(
+    department: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    user: Dict[str, Any] = Depends(_require_role("hr")),
+):
     try:
         return {"tasks": preonboarding_repository.list_tasks(department=department, status=status)}
     except RuntimeError as exc:
@@ -1304,6 +1402,7 @@ def create_task(
     content_type: str = Form("document"),
     duration_minutes: int = Form(15),
     file: Optional[UploadFile] = File(None),
+    user: Dict[str, Any] = Depends(_require_role("hr")),
 ):
     try:
         task = preonboarding_repository.create_task(
@@ -1328,7 +1427,7 @@ def create_task(
 
 
 @app.patch("/api/hr/tasks/{task_id}")
-def update_task(task_id: str, data: TaskUpdateData):
+def update_task(task_id: str, data: TaskUpdateData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         task = preonboarding_repository.update_task(task_id, data.dict(exclude_unset=True))
     except RuntimeError as exc:
@@ -1339,7 +1438,7 @@ def update_task(task_id: str, data: TaskUpdateData):
 
 
 @app.delete("/api/hr/tasks/{task_id}")
-def delete_task(task_id: str):
+def delete_task(task_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         deleted = preonboarding_repository.delete_task(task_id)
     except RuntimeError as exc:
@@ -1350,15 +1449,19 @@ def delete_task(task_id: str):
 
 
 @app.get("/api/learning/modules")
-def list_employee_learning_modules(candidate_id: str = Query("demo")):
+def list_employee_learning_modules(
+    candidate_id: str = Query("demo"),
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    _assert_candidate_access(candidate_id, user)
     try:
-        return {"modules": preonboarding_repository.learning_modules_for_employee(candidate_id)}
+        return {"modules": preonboarding_repository.build_onboarding_status(candidate_id, persist=True).get("learning", [])}
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
 
 
 @app.get("/api/learning/modules/{task_id}/download")
-def download_learning_module(task_id: str):
+def download_learning_module(task_id: str, user: Dict[str, Any] = Depends(_current_auth_user)):
     try:
         task = next((item for item in preonboarding_repository.list_tasks() if item["id"] == task_id), None)
     except RuntimeError as exc:
@@ -1369,15 +1472,22 @@ def download_learning_module(task_id: str):
 
 
 @app.post("/api/learning/progress")
-def update_learning_progress(data: LearningProgressData):
+def update_learning_progress(data: LearningProgressData, user: Dict[str, Any] = Depends(_current_auth_user)):
+    _assert_candidate_access(data.candidate_id or "demo", user)
     try:
-        return preonboarding_repository.update_learning_progress(data.candidate_id or "demo", data.moduleId, data.progress)
+        progress = preonboarding_repository.update_learning_progress(data.candidate_id or "demo", data.moduleId, data.progress)
+        status_doc = preonboarding_repository.build_onboarding_status(
+            data.candidate_id or "demo",
+            persist=True,
+            last_activity="Learning progress updated",
+        )
+        return {"progress": progress, "status": status_doc}
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
 
 
 @app.get("/api/hr/document-requirements")
-def list_document_requirements():
+def list_document_requirements(user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return {"requirements": preonboarding_repository.list_document_requirements()}
     except RuntimeError as exc:
@@ -1385,7 +1495,7 @@ def list_document_requirements():
 
 
 @app.post("/api/hr/document-requirements", status_code=201)
-def create_document_requirement(data: DocumentRequirementData):
+def create_document_requirement(data: DocumentRequirementData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return {"requirement": preonboarding_repository.create_document_requirement(data.dict(exclude_none=True))}
     except RuntimeError as exc:
@@ -1393,7 +1503,7 @@ def create_document_requirement(data: DocumentRequirementData):
 
 
 @app.patch("/api/hr/document-requirements/{requirement_id}")
-def update_document_requirement(requirement_id: str, data: DocumentRequirementData):
+def update_document_requirement(requirement_id: str, data: DocumentRequirementData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         requirement = preonboarding_repository.update_document_requirement(requirement_id, data.dict(exclude_unset=True))
     except RuntimeError as exc:
@@ -1404,7 +1514,7 @@ def update_document_requirement(requirement_id: str, data: DocumentRequirementDa
 
 
 @app.delete("/api/hr/document-requirements/{requirement_id}")
-def delete_document_requirement(requirement_id: str):
+def delete_document_requirement(requirement_id: str, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         deleted = preonboarding_repository.delete_document_requirement(requirement_id)
     except RuntimeError as exc:
@@ -1415,9 +1525,10 @@ def delete_document_requirement(requirement_id: str):
 
 
 @app.get("/api/documents")
-def list_candidate_documents(candidate_id: str = Query("demo")):
+def list_candidate_documents(candidate_id: str = Query(...), user: Dict[str, Any] = Depends(_current_auth_user)):
+    _assert_candidate_access(candidate_id, user)
     try:
-        return {"documents": preonboarding_repository.documents_for_candidate(candidate_id)}
+        return {"documents": preonboarding_repository.build_onboarding_status(candidate_id, persist=True).get("documents", [])}
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
 
@@ -1425,41 +1536,70 @@ def list_candidate_documents(candidate_id: str = Query("demo")):
 @app.post("/api/documents/upload")
 def upload_candidate_document(
     documentId: str = Query(...),
-    candidate_id: str = Form("demo"),
+    candidate_id: str = Form(...),
     file: UploadFile = File(...),
+    user: Dict[str, Any] = Depends(_current_auth_user),
 ):
+    _assert_candidate_access(candidate_id, user)
     try:
-        return preonboarding_repository.upload_candidate_document(candidate_id, documentId, file)
+        upload = preonboarding_repository.upload_candidate_document(candidate_id, documentId, file)
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True)
+        return {"document": upload, "status": status_doc, "documents": status_doc.get("documents", [])}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
 
 
 @app.delete("/api/documents/{document_id}")
-def remove_candidate_document(document_id: str, candidate_id: str = Query("demo")):
+def remove_candidate_document(
+    document_id: str,
+    candidate_id: str = Query(...),
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    _assert_candidate_access(candidate_id, user)
     try:
         removed = preonboarding_repository.remove_candidate_document(candidate_id, document_id)
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
     if not removed:
         raise HTTPException(status_code=404, detail="Document upload not found")
-    return {"ok": True}
+    status_doc = preonboarding_repository.build_onboarding_status(
+        candidate_id,
+        persist=True,
+        last_activity="Removed uploaded document",
+    )
+    return {"ok": True, "status": status_doc, "documents": status_doc.get("documents", [])}
 
 
 @app.post("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/review")
-def review_candidate_document(candidate_id: str, requirement_id: str, data: DocumentReviewData):
-    if data.status not in {"approved", "rejected"}:
-        raise HTTPException(status_code=400, detail="Status must be approved or rejected")
+def review_candidate_document(
+    candidate_id: str,
+    requirement_id: str,
+    data: DocumentReviewData,
+    user: Dict[str, Any] = Depends(_require_role("hr")),
+):
+    if data.status not in {"approved", "verified", "rejected"}:
+        raise HTTPException(status_code=400, detail="Status must be approved, verified, or rejected")
+    if data.status == "rejected" and not (data.comments or "").strip():
+        raise HTTPException(status_code=400, detail="Rejection reason is required")
     try:
         submission = preonboarding_repository.review_candidate_document(candidate_id, requirement_id, data.status, data.comments or "")
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True)
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
     if not submission:
         raise HTTPException(status_code=404, detail="Document submission not found")
-    return {"submission": submission}
+    return {"submission": submission, "status": status_doc, "documents": status_doc.get("documents", [])}
 
 
 @app.get("/api/notifications")
-def list_notifications(user_id: str = Query("demo"), unread_only: bool = Query(False)):
+def list_notifications(
+    user_id: str = Query("demo"),
+    unread_only: bool = Query(False),
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    _assert_candidate_access(user_id, user)
     try:
         return {"notifications": preonboarding_repository.list_notifications(user_id, unread_only)}
     except RuntimeError as exc:
@@ -1467,7 +1607,7 @@ def list_notifications(user_id: str = Query("demo"), unread_only: bool = Query(F
 
 
 @app.post("/api/notifications")
-def create_notification(data: NotificationData):
+def create_notification(data: NotificationData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         return {"notification": preonboarding_repository.create_notification(data.user_id, data.title, data.message, data.channel or "in_app")}
     except RuntimeError as exc:
@@ -1475,9 +1615,13 @@ def create_notification(data: NotificationData):
 
 
 @app.post("/api/notifications/{notification_id}/read")
-def mark_notification_read(notification_id: str):
+def mark_notification_read(notification_id: str, user: Dict[str, Any] = Depends(_current_auth_user)):
     try:
-        notification = preonboarding_repository.mark_notification_read(notification_id)
+        notification = preonboarding_repository.mark_notification_read(
+            notification_id,
+            user_id=_auth_user_id(user),
+            allow_any=user.get("role") == "hr",
+        )
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
     if not notification:

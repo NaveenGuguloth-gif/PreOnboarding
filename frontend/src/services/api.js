@@ -223,6 +223,66 @@ const demoState = {
       accepted_formats: [".pdf", ".jpg", ".jpeg", ".png"],
       approval_required: true,
     },
+    {
+      id: "aadhaar",
+      name: "Aadhaar Card",
+      mandatory: true,
+      department: "All",
+      role: "",
+      due_days_before_joining: 7,
+      reminder_days: 3,
+      max_file_size_mb: 10,
+      accepted_formats: [".pdf", ".jpg", ".jpeg", ".png"],
+      approval_required: true,
+    },
+    {
+      id: "resume",
+      name: "Resume",
+      mandatory: true,
+      department: "All",
+      role: "",
+      due_days_before_joining: 5,
+      reminder_days: 2,
+      max_file_size_mb: 10,
+      accepted_formats: [".pdf"],
+      approval_required: true,
+    },
+    {
+      id: "degree",
+      name: "Degree Certificate",
+      mandatory: true,
+      department: "All",
+      role: "",
+      due_days_before_joining: 10,
+      reminder_days: 3,
+      max_file_size_mb: 15,
+      accepted_formats: [".pdf", ".jpg", ".jpeg", ".png"],
+      approval_required: true,
+    },
+    {
+      id: "experience",
+      name: "Experience Letter",
+      mandatory: false,
+      department: "All",
+      role: "",
+      due_days_before_joining: 10,
+      reminder_days: 3,
+      max_file_size_mb: 15,
+      accepted_formats: [".pdf", ".jpg", ".jpeg", ".png"],
+      approval_required: true,
+    },
+    {
+      id: "photo",
+      name: "Passport Photo",
+      mandatory: true,
+      department: "All",
+      role: "",
+      due_days_before_joining: 7,
+      reminder_days: 3,
+      max_file_size_mb: 5,
+      accepted_formats: [".jpg", ".jpeg", ".png"],
+      approval_required: true,
+    },
   ],
   relocation: {
     location: "Pune",
@@ -390,11 +450,101 @@ function defaultDocumentRows(state) {
   }));
 }
 
+function inferFileType(fileName = "", contentType = "") {
+  const source = `${fileName} ${contentType}`.toLowerCase();
+  if (source.includes(".pdf") || source.includes("pdf")) return "PDF";
+  if (source.includes(".png") || source.includes("png")) return "PNG";
+  if (source.includes(".jpg") || source.includes(".jpeg") || source.includes("jpeg")) return "JPG";
+  if (source.includes(".doc")) return "DOC";
+  return "PDF";
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return "2.4 MB";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function normalizeDocumentRow(doc, index = 0) {
+  const now = new Date().toISOString();
+  const uploadedAt = doc.uploaded_at || doc.uploadedAt || (doc.file_name ? addDays(-Math.max(1, index + 1)) : "");
+  const fileType = doc.file_type || doc.fileType || inferFileType(doc.file_name, doc.content_type);
+  const fileSize = doc.file_size || doc.fileSize || (doc.file_name ? `${(1.2 + index * 0.4).toFixed(1)} MB` : "");
+  const updatedAt = doc.updated_at || doc.updatedAt || doc.verifiedAt || uploadedAt || "";
+  const uploadedBy = doc.uploaded_by || doc.uploadedBy || "Candidate";
+  const versionNumber = doc.version || doc.version_number || (doc.file_name ? 1 : 0);
+  const baseVersion = doc.file_name
+    ? {
+        version: versionNumber || 1,
+        file_name: doc.file_name,
+        uploaded_at: uploadedAt,
+        uploaded_by: uploadedBy,
+        status: doc.status,
+        verified_by: doc.verifiedBy || doc.verified_by || "",
+        verified_at: doc.verifiedAt || doc.verified_at || "",
+        file_type: fileType,
+        file_size: fileSize,
+      }
+    : null;
+  const versions = doc.versions?.length ? doc.versions : baseVersion ? [baseVersion] : [];
+  const auditTrail = doc.auditTrail?.length
+    ? doc.auditTrail
+    : [
+        doc.file_name
+          ? {
+              id: `${doc.id}-audit-upload`,
+              action: versionNumber > 1 ? "Candidate re-uploaded document" : "Candidate uploaded document",
+              actor: uploadedBy,
+              at: uploadedAt,
+              note: doc.file_name,
+            }
+          : null,
+        doc.status === "verified"
+          ? {
+              id: `${doc.id}-audit-verified`,
+              action: "HR verified document",
+              actor: doc.verifiedBy || "HR",
+              at: doc.verifiedAt || updatedAt || now,
+              note: "Verification locked",
+            }
+          : null,
+        doc.status === "rejected"
+          ? {
+              id: `${doc.id}-audit-rejected`,
+              action: "HR rejected document",
+              actor: doc.verifiedBy || "HR",
+              at: updatedAt || now,
+              note: doc.rejectionReason || doc.rejection_reason || doc.comments || "Re-upload requested",
+            }
+          : null,
+      ].filter(Boolean);
+
+  return {
+    ...doc,
+    file_type: fileType,
+    fileSize,
+    file_size: fileSize,
+    uploaded_at: uploadedAt,
+    uploadedAt,
+    uploaded_by: uploadedBy,
+    uploadedBy,
+    updated_at: updatedAt,
+    updatedAt,
+    lastUpdated: updatedAt,
+    version: versionNumber,
+    versions,
+    auditTrail,
+  };
+}
+
 function documentRowsForUser(state, userId) {
-  if (userId === "emp-001" && !state.userDocuments?.[userId]) return state.documents ?? [];
+  if (userId === "emp-001" && !state.userDocuments?.[userId]) {
+    return (state.documents ?? []).map(normalizeDocumentRow);
+  }
   const savedRows = state.userDocuments?.[userId] ?? [];
   const savedById = new Map(savedRows.map((doc) => [doc.id, doc]));
-  return defaultDocumentRows(state).map((doc) => ({ ...doc, ...(savedById.get(doc.id) ?? {}) }));
+  return defaultDocumentRows(state).map((doc, index) => normalizeDocumentRow({ ...doc, ...(savedById.get(doc.id) ?? {}) }, index));
 }
 
 function modulesForUser(state, user) {
@@ -564,7 +714,7 @@ function calculateProgressForUser(state, user) {
   const modules = modulesForUser(state, user);
   const profileSections = profileSectionsForUser(state, user);
   const documentCompletion = documents.length
-    ? clampPercent((documents.filter((doc) => doc.status !== "missing").length / documents.length) * 100)
+    ? clampPercent((documents.filter((doc) => ["uploaded", "submitted", "verified", "approved"].includes(doc.status)).length / documents.length) * 100)
     : 0;
   const learningCompletion = modules.length
     ? clampPercent(modules.reduce((sum, mod) => sum + (mod.progress ?? 0), 0) / modules.length)
@@ -630,8 +780,8 @@ function generatedNotificationsFor(state, user) {
   const now = new Date().toISOString();
   const documents = documentRowsForUser(state, user.id);
   const modules = modulesForUser(state, user);
-  const pendingDocs = documents.filter((doc) => doc.status === "missing").length;
-  const submittedDocs = documents.filter((doc) => doc.status === "submitted").length;
+  const pendingDocs = documents.filter((doc) => ["missing", "pending", "rejected"].includes(doc.status)).length;
+  const submittedDocs = documents.filter((doc) => ["submitted", "uploaded"].includes(doc.status)).length;
   const pendingModules = modules.filter((module) => (module.progress ?? 0) < 100).length;
   const daysRemaining = daysUntil(user.joiningDate ?? user.joining_date);
   const items = [
@@ -776,7 +926,17 @@ function publicUser(user) {
 }
 
 function withFallback(request, fallback) {
-  return request().catch(() => response(fallback()));
+  return request().catch(() => Promise.resolve(fallback()).then((data) => response(data)));
+}
+
+function readFilePreview(file) {
+  if (!file || typeof FileReader === "undefined") return Promise.resolve("");
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(file);
+  });
 }
 
 function metricsFromState() {
@@ -1138,7 +1298,11 @@ export const authApi = {
   },
   me: () =>
     withFallback(
-      () => api.get("/api/auth/me"),
+      () =>
+        api.get("/api/auth/me").then((res) => {
+          rememberSessionUser(res.data?.user);
+          return res;
+        }),
       () => {
         const user = currentUser();
         if (!user) throw new Error("No demo session");
@@ -1208,41 +1372,76 @@ export const candidateApi = {
 
 // Documents
 export const documentsApi = {
-  list: () =>
+  list: (candidateId) =>
     withFallback(
-      () => api.get("/api/documents"),
+      () => api.get("/api/documents", { params: { candidate_id: candidateId ?? currentUser()?.id ?? "demo" } }),
       () => {
         const state = getState();
         const user = currentUser();
-        return { documents: documentRowsForUser(state, user?.id ?? "demo") };
+        return { documents: documentRowsForUser(state, candidateId ?? user?.id ?? "demo") };
       }
     ),
-  upload: (id, formData) =>
+  upload: (id, formData, candidateId, options = {}) =>
     withFallback(
       () => {
         if (!formData.get("candidate_id")) {
-          formData.append("candidate_id", currentUser()?.id ?? "demo");
+          formData.append("candidate_id", candidateId ?? currentUser()?.id ?? "demo");
         }
         return (
         api.post("/api/documents/upload", formData, {
           headers: { "Content-Type": "multipart/form-data" },
           params: { documentId: id },
+          onUploadProgress: options.onUploadProgress,
         })
         );
       },
-      () => {
+      async () => {
         const state = getState();
         const user = currentUser();
-        const userId = user?.id ?? "demo";
+        const userId = candidateId ?? user?.id ?? "demo";
         const file = formData.get("file");
+        const filePreviewUrl = await readFilePreview(file);
         const rows = documentRowsForUser(state, userId).map((doc) =>
           doc.id === id
-            ? {
+            ? normalizeDocumentRow({
                 ...doc,
-                status: "submitted",
+                status: "uploaded",
                 file_name: file?.name ?? "uploaded-file.pdf",
-                uploaded_at: new Date().toISOString().slice(0, 10),
-              }
+                file_preview_url: filePreviewUrl,
+                fileUrl: filePreviewUrl,
+                uploaded_at: new Date().toISOString(),
+                uploaded_by: currentUser()?.name ?? currentUser()?.full_name ?? "Candidate",
+                updated_at: new Date().toISOString(),
+                file_size: formatBytes(file?.size),
+                content_type: file?.type,
+                version: (doc.version || doc.versions?.length || 0) + 1,
+                verifiedBy: "",
+                verifiedAt: "",
+                comments: "",
+                rejectionReason: "",
+                versions: [
+                  ...(doc.versions ?? []),
+                  {
+                    version: (doc.version || doc.versions?.length || 0) + 1,
+                    file_name: file?.name ?? "uploaded-file.pdf",
+                    uploaded_at: new Date().toISOString(),
+                    uploaded_by: currentUser()?.name ?? currentUser()?.full_name ?? "Candidate",
+                    status: "uploaded",
+                    file_type: inferFileType(file?.name, file?.type),
+                    file_size: formatBytes(file?.size),
+                  },
+                ],
+                auditTrail: [
+                  ...(doc.auditTrail ?? []),
+                  {
+                    id: `${doc.id}-audit-${Date.now()}`,
+                    action: doc.file_name ? "Candidate re-uploaded document" : "Candidate uploaded document",
+                    actor: currentUser()?.name ?? currentUser()?.full_name ?? "Candidate",
+                    at: new Date().toISOString(),
+                    note: file?.name ?? "uploaded-file.pdf",
+                  },
+                ],
+              })
             : doc
         );
         state.userDocuments = { ...(state.userDocuments ?? {}), [userId]: rows };
@@ -1251,13 +1450,13 @@ export const documentsApi = {
         return { ok: true };
       }
     ),
-  remove: (id) =>
+  remove: (id, candidateId) =>
     withFallback(
-      () => api.delete(`/api/documents/${id}`, { params: { candidate_id: currentUser()?.id ?? "demo" } }),
+      () => api.delete(`/api/documents/${id}`, { params: { candidate_id: candidateId ?? currentUser()?.id ?? "demo" } }),
       () => {
         const state = getState();
         const user = currentUser();
-        const userId = user?.id ?? "demo";
+        const userId = candidateId ?? user?.id ?? "demo";
         const rows = documentRowsForUser(state, userId).map((doc) =>
           doc.id === id
             ? {
@@ -1278,20 +1477,20 @@ export const documentsApi = {
 
 // Learning
 export const learningApi = {
-  listModules: () => {
+  listModules: (candidateId) => {
     const user = currentUser();
     return withFallback(
-      () => api.get("/api/learning/modules", { params: { candidate_id: user?.id ?? "demo" } }),
+      () => api.get("/api/learning/modules", { params: { candidate_id: candidateId ?? user?.id ?? "demo" } }),
       () => ({ modules: modulesFromHrTasks() })
     );
   },
-  updateProgress: (data) =>
+  updateProgress: (data, candidateId) =>
     withFallback(
-      () => api.post("/api/learning/progress", { ...data, candidate_id: currentUser()?.id ?? "demo" }),
+      () => api.post("/api/learning/progress", { ...data, candidate_id: candidateId ?? currentUser()?.id ?? "demo" }),
       () => {
         const state = getState();
         const user = currentUser();
-        const userId = user?.id ?? "demo";
+        const userId = candidateId ?? user?.id ?? "demo";
         state.userModuleProgress = {
           ...(state.userModuleProgress ?? {}),
           [userId]: {
@@ -1357,9 +1556,9 @@ export const assistantApi = {
 
 // Notifications
 export const notificationApi = {
-  list: (params = {}) =>
+  list: (params = {}, candidateId) =>
     withFallback(
-      () => api.get("/api/notifications", { params: { user_id: currentUser()?.id ?? "demo", ...params } }),
+      () => api.get("/api/notifications", { params: { user_id: candidateId ?? currentUser()?.id ?? "demo", ...params } }),
       () => {
         const user = currentUser();
         const state = getState();
@@ -1460,9 +1659,77 @@ export const hrApi = {
       () => api.get(`/api/hr/candidates/${id}`),
       () => ({
         candidate: getState().candidates.find((candidate) => candidate.id === id),
-        documents: getState().documents,
+        documents: documentRowsForUser(getState(), id),
         modules: getState().modules,
       })
+    ),
+  documentDownloadUrl: (fileUrl) =>
+    fileUrl?.startsWith("http") || fileUrl?.startsWith("data:") || fileUrl?.startsWith("blob:") ? fileUrl : `${BASE_URL}${fileUrl}`,
+  getDocumentPreviewUrl: async (fileUrl) => {
+    if (!fileUrl) return "";
+    if (fileUrl.startsWith("data:") || fileUrl.startsWith("blob:")) return fileUrl;
+    const absoluteUrl = fileUrl.startsWith("http") ? fileUrl : `${BASE_URL}${fileUrl}`;
+    const request = fileUrl.startsWith("http")
+      ? axios.get(absoluteUrl, { responseType: "blob", withCredentials: true })
+      : api.get(fileUrl, { responseType: "blob" });
+    const response = await request;
+    return URL.createObjectURL(response.data);
+  },
+  reviewDocument: (candidateId, requirementId, data) =>
+    withFallback(
+      () => api.post(`/api/hr/candidates/${candidateId}/documents/${requirementId}/review`, data),
+      () => {
+        const state = getState();
+        const status = data.status === "rejected" ? "rejected" : "verified";
+        const now = new Date().toISOString();
+        const reviewer = currentUser()?.name ?? currentUser()?.full_name ?? "HR";
+        const rows = documentRowsForUser(state, candidateId).map((doc) =>
+          doc.id === requirementId
+            ? normalizeDocumentRow({
+                ...doc,
+                status,
+                comments: data.comments || "",
+                rejectionReason: status === "rejected" ? data.comments || "Rejected by HR" : "",
+                verifiedBy: status === "verified" ? reviewer : "",
+                verifiedAt: status === "verified" ? now : "",
+                updated_at: now,
+                versions: (doc.versions ?? []).map((version, index, versions) =>
+                  index === versions.length - 1
+                    ? { ...version, status, verified_by: status === "verified" ? reviewer : "", verified_at: status === "verified" ? now : "" }
+                    : version
+                ),
+                auditTrail: [
+                  ...(doc.auditTrail ?? []),
+                  {
+                    id: `${doc.id}-audit-${Date.now()}`,
+                    action: status === "verified" ? "HR verified document" : "HR rejected document",
+                    actor: reviewer,
+                    at: now,
+                    note: status === "verified" ? "Verification locked" : data.comments || "Re-upload requested",
+                  },
+                ],
+              }
+              )
+            : doc
+        );
+        state.userDocuments = { ...(state.userDocuments ?? {}), [candidateId]: rows };
+        state.notifications = [
+          ...(state.notifications ?? []),
+          {
+            id: `notif-doc-${Date.now()}`,
+            user_id: candidateId,
+            type: "document_approval",
+            title: status === "verified" ? "Document verified" : "Document rejected",
+            message: status === "verified" ? "One of your uploaded documents was verified by HR." : data.comments || "Please re-upload the rejected document.",
+            priority: status === "rejected" ? "high" : "normal",
+            read: false,
+            created_at: now,
+          },
+        ];
+        syncCandidateProgress(state, candidateId);
+        setState(state);
+        return { documents: rows };
+      }
     ),
   createCandidate: (data) =>
     withFallback(

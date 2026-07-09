@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { documentsApi } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
-const statusColor = { missing: "red", submitted: "yellow", verified: "green" };
+const statusColor = { missing: "red", pending: "red", submitted: "yellow", uploaded: "yellow", verified: "green", rejected: "red" };
 
 // Each status gets a dot + accent so the list reads at a glance,
 // independent of the Badge component's fixed palette.
 const STATUS_THEME = {
   missing: { accent: "#EF4444", dot: "bg-rose-500" },
+  pending: { accent: "#EF4444", dot: "bg-rose-500" },
   submitted: { accent: "#F59E0B", dot: "bg-amber-500" },
+  uploaded: { accent: "#F59E0B", dot: "bg-amber-500" },
   verified: { accent: "#10B981", dot: "bg-emerald-500" },
+  rejected: { accent: "#EF4444", dot: "bg-rose-500" },
 };
 
 const validationTips = [
@@ -21,38 +25,52 @@ const validationTips = [
 ];
 
 export default function Documents() {
+  const { user } = useAuth();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState({});
   const [removing, setRemoving] = useState(null);
   const [error, setError] = useState("");
+  const [failedUpload, setFailedUpload] = useState(null);
   const [checkedTips, setCheckedTips] = useState({});
+  const candidateId = user?.id ?? user?.employeeId ?? user?.employee_id ?? "demo";
 
   const load = () =>
     documentsApi
-      .list()
+      .list(candidateId)
       .then((r) => setDocs(r.data?.documents ?? r.data ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
 
   useEffect(() => {
     load();
-  }, []);
+  }, [candidateId]);
 
   const handleUpload = async (docId, file) => {
     if (!file) return;
     setUploading(docId);
+    setFailedUpload(null);
+    setUploadProgress((current) => ({ ...current, [docId]: 0 }));
     setError("");
     const fd = new FormData();
     fd.append("file", file);
     fd.append("documentId", docId);
     try {
-      await documentsApi.upload(docId, fd);
+      await documentsApi.upload(docId, fd, candidateId, {
+        onUploadProgress: (event) => {
+          if (!event.total) return;
+          const pct = Math.round((event.loaded / event.total) * 100);
+          setUploadProgress((current) => ({ ...current, [docId]: pct }));
+        },
+      });
       await load();
     } catch {
+      setFailedUpload({ docId, file });
       setError("Upload failed. Please try again.");
     } finally {
       setUploading(null);
+      setUploadProgress((current) => ({ ...current, [docId]: undefined }));
     }
   };
 
@@ -60,7 +78,7 @@ export default function Documents() {
     setRemoving(docId);
     setError("");
     try {
-      await documentsApi.remove(docId);
+      await documentsApi.remove(docId, candidateId);
       await load();
     } catch {
       setError("Remove failed. Please try again.");
@@ -70,7 +88,7 @@ export default function Documents() {
   };
 
   const stats = useMemo(() => {
-    const submitted = docs.filter((d) => d.status !== "missing").length;
+    const submitted = docs.filter((d) => !["missing", "pending", "rejected"].includes(d.status)).length;
     return {
       required: docs.length,
       submitted,
@@ -97,8 +115,17 @@ export default function Documents() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-rose-800 bg-rose-950/60 px-4 py-3 text-sm text-rose-300">
-          {error}
+        <div className="flex flex-col gap-3 rounded-lg border border-rose-800 bg-rose-950/60 px-4 py-3 text-sm text-rose-300 sm:flex-row sm:items-center sm:justify-between">
+          <span>{error}</span>
+          {failedUpload ? (
+            <button
+              type="button"
+              onClick={() => handleUpload(failedUpload.docId, failedUpload.file)}
+              className="w-fit rounded-lg border border-rose-700 px-3 py-1.5 text-sm font-semibold text-rose-100 transition-colors hover:bg-rose-900"
+            >
+              Retry upload
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -123,6 +150,7 @@ export default function Documents() {
           handleRemove={handleRemove}
           handleUpload={handleUpload}
           removing={removing}
+          uploadProgress={uploadProgress}
           uploading={uploading}
         />
       </DocumentPanel>
@@ -158,7 +186,7 @@ export default function Documents() {
   );
 }
 
-function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, uploading }) {
+function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, uploadProgress, uploading }) {
   if (documents.length === 0) {
     return <p className="py-4 text-center text-sm text-gray-400">No documents found.</p>;
   }
@@ -185,8 +213,16 @@ function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, 
                   {document.uploaded_at ? <span>Uploaded: {document.uploaded_at}</span> : null}
                   {document.file_name ? <span>File: {document.file_name}</span> : null}
                   {document.approval_status ? <span>Approval: {document.approval_status}</span> : null}
-                  {document.rejection_reason ? <span className="text-rose-400">Rejected: {document.rejection_reason}</span> : null}
+                  {document.rejectionReason || document.rejection_reason ? <span className="text-rose-400">Rejected: {document.rejectionReason || document.rejection_reason}</span> : null}
                 </div>
+                {uploading === document.id ? (
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-800">
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                      style={{ width: `${uploadProgress[document.id] ?? 10}%` }}
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {document.status !== "verified" ? (
@@ -203,7 +239,7 @@ function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, 
                         uploading === document.id || removing === document.id ? "pointer-events-none opacity-50" : ""
                       }`}
                     >
-                      {uploading === document.id ? "Uploading..." : document.status === "missing" ? "Upload" : "Re-upload"}
+                      {uploading === document.id ? "Uploading..." : ["missing", "pending"].includes(document.status) ? "Upload" : "Re-upload"}
                     </span>
                   </label>
                   {document.file_name ? (
