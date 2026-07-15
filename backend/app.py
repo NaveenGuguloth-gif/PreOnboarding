@@ -980,6 +980,19 @@ def update_candidate_profile(data: Dict[str, Any], user: Dict[str, Any] = Depend
     candidate_id = str(user.get("_id") or user.get("id"))
     profile_sections = data.get("profileSections") or data.get("profile_sections")
     update: Dict[str, Any] = {k: v for k, v in data.items() if k not in {"profileSections", "profile_sections"}}
+    if "welcome_kit_assignment" in update:
+        allowed_kit_items = {"employee_id", "official_email", "laptop"}
+        kit_items = update.get("welcome_kit_assignment") or {}
+        update["welcome_kit_assignment"] = {
+            item_id: bool(kit_items.get(item_id))
+            for item_id in allowed_kit_items
+        }
+        confirmed_count = sum(1 for value in update["welcome_kit_assignment"].values() if value)
+        update["welcomeKit"] = {
+            "status": "received" if confirmed_count == len(allowed_kit_items) else ("partially_received" if confirmed_count else "not_confirmed"),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "items": update["welcome_kit_assignment"],
+        }
     if profile_sections:
         completed = sum(1 for value in profile_sections.values() if value)
         total = max(1, len(profile_sections))
@@ -1190,17 +1203,10 @@ def create_hr_candidate(data: CandidateCreateData, user: Dict[str, Any] = Depend
 def update_hr_candidate(candidate_id: str, data: CandidateUpdateData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
         payload = data.dict(exclude_unset=True)
+        payload.pop("welcome_kit_assignment", None)
+        payload.pop("welcomeKit", None)
         candidate = hr_repository.update_candidate(candidate_id, payload)
-        if "welcome_kit_assignment" in payload or "welcomeKit" in payload:
-            preonboarding_repository.audit(
-                _auth_user_id(user),
-                "update",
-                "welcome_kit",
-                candidate_id,
-                payload.get("welcomeKit") or payload.get("welcome_kit_assignment") or {},
-            )
-        else:
-            preonboarding_repository.audit(_auth_user_id(user), "update", "candidate", candidate_id, payload)
+        preonboarding_repository.audit(_auth_user_id(user), "update", "candidate", candidate_id, payload)
         status_doc = preonboarding_repository.build_onboarding_status(
             candidate_id,
             persist=True,
@@ -1275,6 +1281,10 @@ class DocumentRequirementData(BaseModel):
 class DocumentReviewData(BaseModel):
     status: str
     comments: Optional[str] = ""
+
+
+class DocumentRetryData(BaseModel):
+    candidate_id: Optional[str] = "demo"
 
 
 class LearningProgressData(BaseModel):
@@ -1581,6 +1591,79 @@ def remove_candidate_document(
         last_activity="Removed uploaded document",
     )
     return {"ok": True, "status": status_doc, "documents": status_doc.get("documents", [])}
+
+
+@app.get("/api/documents/{document_id}/verification")
+def get_document_verification(
+    document_id: str,
+    candidate_id: str = Query(...),
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    _assert_candidate_access(candidate_id, user)
+    try:
+        details = preonboarding_repository.document_verification_details(candidate_id, document_id)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not details:
+        raise HTTPException(status_code=404, detail="Document verification not found")
+    return details
+
+
+@app.post("/api/documents/{document_id}/verification/retry")
+def retry_document_verification(
+    document_id: str,
+    data: DocumentRetryData,
+    user: Dict[str, Any] = Depends(_current_auth_user),
+):
+    candidate_id = data.candidate_id or "demo"
+    _assert_candidate_access(candidate_id, user)
+    try:
+        details = preonboarding_repository.retry_document_verification(candidate_id, document_id)
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not details:
+        raise HTTPException(status_code=404, detail="Document submission not found")
+    return {"verification": details, "status": status_doc, "documents": status_doc.get("documents", [])}
+
+
+@app.get("/api/hr/document-verification/review-cases")
+def list_document_review_cases(user: Dict[str, Any] = Depends(_require_role("hr"))):
+    try:
+        return {"cases": preonboarding_repository.hr_document_review_cases()}
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+
+
+@app.get("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/verification")
+def get_hr_document_verification(
+    candidate_id: str,
+    requirement_id: str,
+    user: Dict[str, Any] = Depends(_require_role("hr")),
+):
+    try:
+        details = preonboarding_repository.document_verification_details(candidate_id, requirement_id)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not details:
+        raise HTTPException(status_code=404, detail="Document verification not found")
+    return details
+
+
+@app.post("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/verification/retry")
+def retry_hr_document_verification(
+    candidate_id: str,
+    requirement_id: str,
+    user: Dict[str, Any] = Depends(_require_role("hr")),
+):
+    try:
+        details = preonboarding_repository.retry_document_verification(candidate_id, requirement_id)
+        status_doc = preonboarding_repository.build_onboarding_status(candidate_id, persist=True)
+    except RuntimeError as exc:
+        _enterprise_unavailable_response(exc)
+    if not details:
+        raise HTTPException(status_code=404, detail="Document submission not found")
+    return {"verification": details, "status": status_doc, "documents": status_doc.get("documents", [])}
 
 
 @app.post("/api/hr/candidates/{candidate_id}/documents/{requirement_id}/review")
@@ -1939,63 +2022,11 @@ async def assistant_chat(data: AssistantChatData):
 
 
 def _fallback_relocation_resources(location: str) -> List[Dict[str, Any]]:
-    area = location.strip() or "your preferred area"
-    return [
-        {
-            "id": "ai-apartments",
-            "category": "Apartments",
-            "title": f"Apartments and PGs near {area}",
-            "description": "Fallback suggestion. Verify details before contacting or booking.",
-            "address": f"{area}",
-            "contact": "Verify with HR travel desk or local listings",
-            "distance_km": 1.5,
-        },
-        {
-            "id": "ai-hospitals",
-            "category": "Nearby Hospitals",
-            "title": f"Hospitals and clinics near {area}",
-            "description": "Fallback suggestion. Verify details before visiting.",
-            "address": f"{area}",
-            "contact": "Verify emergency number before relying on it",
-            "distance_km": 2.0,
-        },
-        {
-            "id": "ai-gyms",
-            "category": "Nearby Gyms",
-            "title": f"Gyms near {area}",
-            "description": "Fallback suggestion. Visit before paying membership.",
-            "address": f"{area}",
-            "contact": "Visit before paying membership",
-            "distance_km": 1.0,
-        },
-        {
-            "id": "ai-essentials",
-            "category": "Daily Essentials",
-            "title": f"Groceries, pharmacy, and daily needs near {area}",
-            "description": "Fallback suggestion. Save two backup options.",
-            "address": f"{area}",
-            "contact": "Save two backup options",
-            "distance_km": 0.8,
-        },
-    ]
+    return []
 
 
 def _fallback_relocation_categories(location: str) -> List[Dict[str, Any]]:
-    resources = _fallback_relocation_resources(location)
-    return [{
-        "key": "relocation-results",
-        "title": "Relocation Results",
-        "columns": ["Name", "Location", "Contact", "Distance"],
-        "items": [
-            {
-                "Name": item["title"],
-                "Location": item.get("address") or location,
-                "Contact": item.get("contact") or "Not Available",
-                "Distance": f"{item.get('distance_km', 'Not Available')} km",
-            }
-            for item in resources
-        ],
-    }]
+    return []
 
 
 def _extract_json_object(text: str) -> Dict[str, Any]:
@@ -2022,12 +2053,12 @@ Employee entered this relocation location/search text:
 {location}
 
 Task:
-1. Return useful relocation options grouped by category near the entered location.
-2. Include these categories when available: Apartments, Nearby Hospitals, Nearby Gyms, Daily Essentials, Transport.
-3. Give 2 to 4 useful items per category.
-4. Sort each category by nearest or most useful first when distance is known.
-5. Never invent exact phone numbers, addresses, distances, or contacts.
-6. If a field cannot be verified, write "Not Available".
+1. Return real nearby places for an employee relocating near the entered location.
+2. Include these categories when real data is available: Hospitals, Apartments/PGs, Gyms, Supermarkets, Schools, Transport, Essential Services.
+3. Give only places you can identify with high confidence from your available knowledge/context.
+4. Never invent place names, phone numbers, addresses, distances, coordinates, ratings, opening status, or contacts.
+5. If a field cannot be verified, write "Data unavailable".
+6. If no accurate places are available, return an empty resources array.
 7. Keep each description short and practical for an employee relocating.
 
 Return JSON only with this exact shape:
@@ -2037,16 +2068,23 @@ Return JSON only with this exact shape:
       "id": "short-id",
       "category": "Apartments",
       "title": "...",
+      "name": "...",
       "description": "...",
+      "area": "...",
+      "locality": "...",
       "address": "...",
       "contact": "...",
+      "opening_status": "...",
+      "verified_details": "...",
       "distance_km": 1.2,
-      "distance": "Distance value"
+      "distance": "Distance value",
+      "lat": 18.0000,
+      "lng": 73.0000
     }}
   ]
 }}
 
-Return resources only. Use category names exactly where possible: Apartments, Nearby Hospitals, Nearby Gyms, Daily Essentials, Transport.
+Return resources only. Use category names exactly where possible: Hospitals, Apartments/PGs, Gyms, Supermarkets, Schools, Transport, Essential Services.
 """
 
     try:
@@ -2065,7 +2103,7 @@ Return resources only. Use category names exactly where possible: Apartments, Ne
                   },
                   {"role": "user", "content": prompt},
               ],
-              "temperature": 0.2,
+              "temperature": 0.7,
           },
           timeout=30,
       )
@@ -2075,16 +2113,16 @@ Return resources only. Use category names exactly where possible: Apartments, Ne
       resources = parsed.get("resources") if isinstance(parsed.get("resources"), list) else []
       categories = parsed.get("categories") if isinstance(parsed.get("categories"), list) else []
       if not resources:
-          resources = _fallback_relocation_resources(location)
+          resources = []
       if not categories:
-          categories = _fallback_relocation_categories(location)
+          categories = []
       for category in categories:
           if isinstance(category, dict):
               category["columns"] = ["Name", "Location", "Contact", "Distance"]
       summary = parsed.get("summary") if isinstance(parsed.get("summary"), dict) else {}
       return {
           "location": parsed.get("location") or summary.get("destination") or location,
-          "summary": summary or {"destination": location, "overview": f"AI relocation suggestions for {location}."},
+          "summary": summary or {"destination": location, "overview": "Data unavailable" if not resources else f"Structured relocation results for {location}."},
           "categories": categories,
           "suggested_best_choice": {},
           "additional_insights": parsed.get("additional_insights") or [],
@@ -2095,12 +2133,12 @@ Return resources only. Use category names exactly where possible: Apartments, Ne
       logger.warning(f"Relocation LLM search failed: {exc}", exc_info=True)
       return {
           "location": location,
-          "summary": {"destination": location, "overview": "Using fallback relocation suggestions because the AI search is temporarily unavailable."},
-          "categories": _fallback_relocation_categories(location),
+          "summary": {"destination": location, "overview": "Data unavailable. The ChatGPT/OpenAI relocation search is temporarily unavailable."},
+          "categories": [],
           "suggested_best_choice": {},
-          "additional_insights": ["Verify addresses, prices, ratings, and availability directly before booking."],
-          "resources": _fallback_relocation_resources(location),
-          "source": "fallback",
+          "additional_insights": [],
+          "resources": [],
+          "source": "unavailable",
       }
 
 

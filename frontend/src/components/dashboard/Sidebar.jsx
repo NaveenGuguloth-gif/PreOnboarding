@@ -5,6 +5,7 @@ const candidateNav = [
   { to: "/dashboard",             label: "Overview",    icon: "⌂" },
   { to: "/dashboard/documents",   label: "Documents",   icon: "▣" },
   { to: "/dashboard/learning",    label: "Learning",    icon: "◈" },
+  { to: "/dashboard/plant-map",   label: "Plant Map",   icon: "▤" },
   { to: "/dashboard/relocation",  label: "Relocation",  icon: "◇" },
   { to: "/dashboard/notifications", label: "Notifications", icon: "◌" },
   { to: "/dashboard/assistant",   label: "Assistant",   icon: "✦" },

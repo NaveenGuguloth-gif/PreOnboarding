@@ -7,6 +7,14 @@ from fastapi import UploadFile
 from pymongo import ASCENDING, DESCENDING
 
 from backend.db_manager import client
+from backend.document_verification import (
+    PROCESSING,
+    REJECTED,
+    VERIFIED,
+    build_verification_result,
+    mask_sensitive,
+    sha256_file,
+)
 from backend import hr_repository
 from backend.settings import settings
 
@@ -15,6 +23,7 @@ UPLOAD_DIR = Path("storage/uploads")
 DOCUMENT_ALLOWED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png"}
 DOCUMENT_ALLOWED_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 DOCUMENT_MAX_SIZE_MB = 10
+WELCOME_KIT_ITEM_IDS = ("employee_id", "official_email", "laptop")
 
 
 def _db():
@@ -35,6 +44,12 @@ def _public(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not doc:
         return None
     return _json_safe(doc)
+
+
+def _normalize_welcome_kit_items(items: Dict[str, Any]) -> Dict[str, bool]:
+    if not isinstance(items, dict):
+        return {}
+    return {item_id: bool(items.get(item_id)) for item_id in WELCOME_KIT_ITEM_IDS}
 
 
 def _json_safe(value: Any) -> Any:
@@ -180,11 +195,14 @@ def _save_upload(
     target = target_dir / safe_name
     with target.open("wb") as out:
         out.write(content)
+    sha256_hash = sha256_file(str(target))
     return {
         "file_name": file.filename or safe_name,
         "file_path": str(target),
+        "storage_key": f"{folder}/{safe_name}",
         "content_type": content_type,
         "file_size": len(content),
+        "sha256_hash": sha256_hash,
     }
 
 
@@ -194,6 +212,14 @@ def ensure_indexes():
     db.pre_onboarding_tasks.create_index([("department", ASCENDING), ("status", ASCENDING)])
     db.pre_onboarding_document_requirements.create_index([("name", ASCENDING)], unique=True)
     db.pre_onboarding_document_submissions.create_index([("candidate_id", ASCENDING), ("requirement_id", ASCENDING)])
+    db.document_versions.create_index([("document_id", ASCENDING), ("version", DESCENDING)])
+    db.document_extractions.create_index([("document_id", ASCENDING), ("created_at", DESCENDING)])
+    db.verification_checks.create_index([("document_id", ASCENDING), ("created_at", DESCENDING)])
+    db.verification_provider_results.create_index([("document_id", ASCENDING), ("created_at", DESCENDING)])
+    db.verification_decisions.create_index([("document_id", ASCENDING), ("decided_at", DESCENDING)])
+    db.document_review_actions.create_index([("document_id", ASCENDING), ("created_at", DESCENDING)])
+    db.document_audit_logs.create_index([("document_id", ASCENDING), ("created_at", DESCENDING)])
+    db.pre_onboarding_document_submissions.create_index([("sha256_hash", ASCENDING)])
     db.pre_onboarding_notifications.create_index([("user_id", ASCENDING), ("read", ASCENDING), ("created_at", DESCENDING)])
     db.pre_onboarding_audit_logs.create_index([("created_at", DESCENDING)])
 
@@ -707,10 +733,234 @@ def documents_for_candidate(candidate_id: str = "demo") -> List[Dict[str, Any]]:
                 "fileUrl": file_url,
                 "version": submission.get("version", len(versions)),
                 "versions": versions,
+                "upload_status": submission.get("upload_status") or status,
+                "uploadStatus": submission.get("upload_status") or status,
+                "verification_status": submission.get("verification_status", ""),
+                "verificationStatus": submission.get("verification_status", ""),
+                "verification_level": submission.get("verification_level", ""),
+                "verificationLevel": submission.get("verification_level", ""),
+                "overall_score": submission.get("overall_score"),
+                "overallScore": submission.get("overall_score"),
+                "processed_at": submission.get("processed_at").isoformat() if isinstance(submission.get("processed_at"), datetime) else submission.get("processed_at"),
+                "processedAt": submission.get("processed_at").isoformat() if isinstance(submission.get("processed_at"), datetime) else submission.get("processed_at"),
+                "verification_explanation": submission.get("verification_explanation", ""),
+                "verificationExplanation": submission.get("verification_explanation", ""),
+                "document_type": submission.get("document_type", ""),
+                "documentTypeKey": submission.get("document_type", ""),
+                "extracted_fields": submission.get("extracted_fields", {}),
+                "extractedFields": submission.get("extracted_fields", {}),
+                "extraction_confidence": submission.get("extraction_confidence", {}),
+                "extractionConfidence": submission.get("extraction_confidence", {}),
+                "risk_rules": submission.get("risk_rules", []),
+                "riskRules": submission.get("risk_rules", []),
                 "auditTrail": _document_audit(candidate_id, req["id"]),
             }
         )
     return rows
+
+
+def _verification_audit(candidate_id: str, requirement_id: str) -> List[Dict[str, Any]]:
+    logs = _collection("document_audit_logs").find({"candidate_id": candidate_id, "requirement_id": requirement_id}).sort("created_at", ASCENDING)
+    return [_json_safe(log) for log in logs]
+
+
+def _store_verification_audit(candidate_id: str, requirement_id: str, actor: str, action: str, details: Dict[str, Any]) -> None:
+    _collection("document_audit_logs").insert_one(
+        {
+            "id": f"docaudit_{uuid4().hex[:10]}",
+            "document_id": f"{candidate_id}:{requirement_id}",
+            "candidate_id": candidate_id,
+            "requirement_id": requirement_id,
+            "actor": actor,
+            "action": action,
+            "details": _json_safe(details),
+            "created_at": _now(),
+        }
+    )
+
+
+def _masked_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: mask_sensitive(key, value) for key, value in (fields or {}).items()}
+
+
+def _persist_verification_artifacts(
+    candidate_id: str,
+    requirement_id: str,
+    submission: Dict[str, Any],
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    now = _now()
+    document_id = submission.get("id") or f"{candidate_id}:{requirement_id}"
+    extraction = result.get("extraction", {})
+    fields = extraction.get("fields", {})
+    masked_fields = _masked_fields(fields)
+    decision = result.get("decision", {})
+    checks = result.get("checks", [])
+    risk = result.get("risk", {})
+
+    for collection_name in [
+        "document_extractions",
+        "verification_checks",
+        "verification_provider_results",
+        "verification_decisions",
+    ]:
+        _collection(collection_name).delete_many({"document_id": document_id})
+
+    _collection("document_versions").insert_one(
+        {
+            "id": f"docver_{uuid4().hex[:10]}",
+            "document_id": document_id,
+            "candidate_id": candidate_id,
+            "requirement_id": requirement_id,
+            "version": submission.get("version", 1),
+            "file_name": submission.get("file_name"),
+            "storage_key": submission.get("storage_key"),
+            "sha256_hash": submission.get("sha256_hash"),
+            "content_type": submission.get("content_type"),
+            "file_size": submission.get("file_size"),
+            "created_at": now,
+        }
+    )
+    _collection("document_extractions").insert_one(
+        {
+            "id": f"extract_{uuid4().hex[:10]}",
+            "document_id": document_id,
+            "candidate_id": candidate_id,
+            "requirement_id": requirement_id,
+            "provider": extraction.get("provider"),
+            "fields": masked_fields,
+            "confidence": extraction.get("confidence", {}),
+            "raw_response": extraction.get("raw_response", {}),
+            "processed_at": now,
+        }
+    )
+    for check in checks:
+        _collection("verification_checks").insert_one(
+            {
+                "id": check.get("id") or f"check_{uuid4().hex[:10]}",
+                "document_id": document_id,
+                "candidate_id": candidate_id,
+                "requirement_id": requirement_id,
+                **_json_safe(check),
+                "created_at": now,
+            }
+        )
+    for provider_result in result.get("provider_results", []):
+        _collection("verification_provider_results").insert_one(
+            {
+                "id": f"provider_{uuid4().hex[:10]}",
+                "document_id": document_id,
+                "candidate_id": candidate_id,
+                "requirement_id": requirement_id,
+                **_json_safe(provider_result),
+                "created_at": now,
+            }
+        )
+    _collection("verification_decisions").insert_one(
+        {
+            "document_id": document_id,
+            "candidate_id": candidate_id,
+            "requirement_id": requirement_id,
+            **_json_safe(decision),
+            "risk_rules": risk.get("rules", []),
+            "created_at": now,
+        }
+    )
+    payload = {
+        "upload_status": "uploaded",
+        "verification_status": decision.get("status"),
+        "verification_level": decision.get("level"),
+        "overall_score": decision.get("overall_score"),
+        "processed_at": now,
+        "verification_explanation": decision.get("explanation"),
+        "document_type": result.get("document_type"),
+        "extracted_fields": masked_fields,
+        "extraction_confidence": extraction.get("confidence", {}),
+        "risk_rules": risk.get("rules", []),
+        "updated_at": now,
+    }
+    _collection("pre_onboarding_document_submissions").update_one(
+        {"candidate_id": candidate_id, "requirement_id": requirement_id},
+        {"$set": payload},
+    )
+    _store_verification_audit(candidate_id, requirement_id, "system", "verification_completed", payload)
+    return payload
+
+
+def process_document_verification(candidate_id: str, requirement_id: str) -> Optional[Dict[str, Any]]:
+    submissions = _collection("pre_onboarding_document_submissions")
+    submission = submissions.find_one({"candidate_id": candidate_id, "requirement_id": requirement_id})
+    if not submission or not submission.get("file_path"):
+        return None
+    requirement = _collection("pre_onboarding_document_requirements").find_one({"id": requirement_id}) or {}
+    candidate = hr_repository.get_candidate(candidate_id) or {}
+    submissions.update_one(
+        {"candidate_id": candidate_id, "requirement_id": requirement_id},
+        {"$set": {"verification_status": PROCESSING, "upload_status": "uploaded", "updated_at": _now()}},
+    )
+    _store_verification_audit(candidate_id, requirement_id, "system", "verification_started", {"file_name": submission.get("file_name")})
+    duplicate_query = {
+        "sha256_hash": submission.get("sha256_hash"),
+        "candidate_id": {"$ne": candidate_id},
+    }
+    duplicate_count = submissions.count_documents(duplicate_query) if submission.get("sha256_hash") else 0
+    result = build_verification_result(submission, candidate, requirement, duplicate_count)
+    payload = _persist_verification_artifacts(candidate_id, requirement_id, submission, result)
+    document_name = requirement.get("name") or requirement_id
+    status = payload.get("verification_status")
+    create_notification(candidate_id, "Document verification updated", f"{document_name}: {payload.get('verification_explanation')}", "document_approval")
+    if status in {"NEEDS_HR_REVIEW", "REJECTED", "VERIFICATION_UNAVAILABLE"}:
+        create_notification("hr", "Document needs review", f"{candidate.get('name') or candidate_id}: {document_name} requires HR review.", "document_approval")
+    audit(candidate_id, "verify", "document", requirement_id, {"verification_status": status, "overall_score": payload.get("overall_score")})
+    _sync_candidate_metrics(candidate_id, f"Verified {document_name}")
+    return document_verification_details(candidate_id, requirement_id)
+
+
+def document_verification_details(candidate_id: str, requirement_id: str) -> Optional[Dict[str, Any]]:
+    submission = _collection("pre_onboarding_document_submissions").find_one({"candidate_id": candidate_id, "requirement_id": requirement_id})
+    if not submission:
+        return None
+    document_id = submission.get("id") or f"{candidate_id}:{requirement_id}"
+    latest_extraction = _collection("document_extractions").find_one({"document_id": document_id}, sort=[("processed_at", DESCENDING)])
+    checks = [_json_safe(check) for check in _collection("verification_checks").find({"document_id": document_id}).sort("created_at", DESCENDING)]
+    provider_results = [_json_safe(item) for item in _collection("verification_provider_results").find({"document_id": document_id}).sort("created_at", DESCENDING)]
+    decision = _collection("verification_decisions").find_one({"document_id": document_id}, sort=[("created_at", DESCENDING)])
+    actions = [_json_safe(item) for item in _collection("document_review_actions").find({"document_id": document_id}).sort("created_at", DESCENDING)]
+    return {
+        "submission": _public(submission),
+        "extraction": _json_safe(latest_extraction) if latest_extraction else None,
+        "checks": checks,
+        "provider_results": provider_results,
+        "decision": _json_safe(decision) if decision else None,
+        "review_actions": actions,
+        "audit": _verification_audit(candidate_id, requirement_id),
+    }
+
+
+def retry_document_verification(candidate_id: str, requirement_id: str) -> Optional[Dict[str, Any]]:
+    _store_verification_audit(candidate_id, requirement_id, "system", "verification_retry_requested", {})
+    return process_document_verification(candidate_id, requirement_id)
+
+
+def hr_document_review_cases() -> List[Dict[str, Any]]:
+    cases = []
+    query = {"verification_status": {"$in": ["NEEDS_HR_REVIEW", "REJECTED", "VERIFICATION_UNAVAILABLE"]}}
+    for submission in _collection("pre_onboarding_document_submissions").find(query).sort("updated_at", DESCENDING):
+        candidate = hr_repository.get_candidate(submission.get("candidate_id")) or {}
+        requirement = _collection("pre_onboarding_document_requirements").find_one({"id": submission.get("requirement_id")}) or {}
+        cases.append(
+            {
+                "candidate_id": submission.get("candidate_id"),
+                "candidate_name": candidate.get("name") or submission.get("candidate_id"),
+                "requirement_id": submission.get("requirement_id"),
+                "document_name": requirement.get("name") or submission.get("requirement_id"),
+                "verification_status": submission.get("verification_status"),
+                "overall_score": submission.get("overall_score"),
+                "updated_at": submission.get("updated_at"),
+                "explanation": submission.get("verification_explanation"),
+            }
+        )
+    return [_json_safe(item) for item in cases]
 
 
 def candidate_document_file(candidate_id: str, requirement_id: str) -> Optional[Dict[str, Any]]:
@@ -744,6 +994,8 @@ def upload_candidate_document(candidate_id: str, requirement_id: str, file: Uplo
     version_entry = {
         "file_name": upload["file_name"],
         "file_path": upload["file_path"],
+        "storage_key": upload.get("storage_key"),
+        "sha256_hash": upload.get("sha256_hash"),
         "content_type": upload["content_type"],
         "file_size": upload.get("file_size"),
         "uploaded_by": candidate_name,
@@ -754,6 +1006,8 @@ def upload_candidate_document(candidate_id: str, requirement_id: str, file: Uplo
         "candidate_id": candidate_id,
         "requirement_id": requirement_id,
         "status": "uploaded",
+        "upload_status": "uploaded",
+        "verification_status": PROCESSING,
         "comments": "",
         "rejection_reason": "",
         "verified_by": "",
@@ -783,8 +1037,10 @@ def upload_candidate_document(candidate_id: str, requirement_id: str, file: Uplo
     create_notification(candidate_id, "Document uploaded", f"{document_name} was uploaded for HR review.", "document_approval")
     create_notification("hr", "Document uploaded", f"{candidate_name} uploaded {document_name}.", "document_approval")
     audit(candidate_id, "upload", "document", requirement_id, upload)
+    _store_verification_audit(candidate_id, requirement_id, candidate_name, "upload", {"file_name": upload.get("file_name")})
+    process_document_verification(candidate_id, requirement_id)
     _sync_candidate_metrics(candidate_id, f"Uploaded {document_name}")
-    return _public(doc)
+    return _public(_collection("pre_onboarding_document_submissions").find_one({"candidate_id": candidate_id, "requirement_id": requirement_id}))
 
 
 def remove_candidate_document(candidate_id: str, requirement_id: str) -> bool:
@@ -801,6 +1057,16 @@ def remove_candidate_document(candidate_id: str, requirement_id: str) -> bool:
             pass
 
     result = submissions.delete_one({"candidate_id": candidate_id, "requirement_id": requirement_id})
+    for collection_name in [
+        "document_versions",
+        "document_extractions",
+        "verification_checks",
+        "verification_provider_results",
+        "verification_decisions",
+        "document_review_actions",
+        "document_audit_logs",
+    ]:
+        _collection(collection_name).delete_many({"candidate_id": candidate_id, "requirement_id": requirement_id})
     audit(candidate_id, "remove", "document", requirement_id, {"file_name": existing.get("file_name")})
     _sync_candidate_metrics(candidate_id, "Removed uploaded document")
     return result.deleted_count > 0
@@ -810,8 +1076,12 @@ def review_candidate_document(candidate_id: str, requirement_id: str, status: st
     normalized_status = _document_status(status)
     if normalized_status not in {"verified", "rejected"}:
         normalized_status = "verified" if status == "approved" else status
+    verification_status = VERIFIED if normalized_status == "verified" else REJECTED
     payload = {
         "status": normalized_status,
+        "verification_status": verification_status,
+        "verification_level": "manual_hr_review",
+        "verification_explanation": comments or ("HR manually approved this document." if normalized_status == "verified" else "HR rejected this document and requested correction."),
         "comments": comments,
         "rejection_reason": comments if normalized_status == "rejected" else "",
         "verified_by": "HR" if normalized_status == "verified" else "",
@@ -836,6 +1106,20 @@ def review_candidate_document(candidate_id: str, requirement_id: str, status: st
         {"candidate_id": candidate_id, "requirement_id": requirement_id},
         {"$set": payload},
     )
+    document_id = (existing or {}).get("id") or f"{candidate_id}:{requirement_id}"
+    _collection("document_review_actions").insert_one(
+        {
+            "id": f"review_{uuid4().hex[:10]}",
+            "document_id": document_id,
+            "candidate_id": candidate_id,
+            "requirement_id": requirement_id,
+            "action": normalized_status,
+            "comments": comments,
+            "actor": "HR",
+            "created_at": _now(),
+        }
+    )
+    _store_verification_audit(candidate_id, requirement_id, "HR", f"manual_{normalized_status}", payload)
     title = "Document verified" if normalized_status == "verified" else "Document rejected"
     message = comments or ("Your document was verified by HR." if normalized_status == "verified" else "Your document was rejected. Please re-upload it.")
     create_notification(candidate_id, title, message, "document_approval")
@@ -911,6 +1195,13 @@ def build_onboarding_status(candidate_id: str, persist: bool = True, last_activi
             "updatedAt": candidate.get("updated_at"),
             "items": legacy_kit,
         }
+    welcome_kit_items = _normalize_welcome_kit_items(welcome_kit.get("items") or legacy_kit)
+    confirmed_count = sum(1 for value in welcome_kit_items.values() if value)
+    welcome_kit = {
+        **welcome_kit,
+        "status": "received" if confirmed_count == len(WELCOME_KIT_ITEM_IDS) else ("partially_received" if confirmed_count else "not_confirmed"),
+        "items": welcome_kit_items,
+    }
 
     document_completion = round((sum(1 for doc in documents if _document_is_complete(doc)) / len(documents)) * 100) if documents else 0
     learning_completion = round(sum(int(module.get("progress", 0) or 0) for module in learning) / len(learning)) if learning else 0

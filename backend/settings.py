@@ -48,6 +48,21 @@ class Settings(BaseSettings):
    
     STT_API_URL:str = "https://neuroverse.tatamotors.com/code-stt/transcribe_audio"
     TTS_API_URL:str = "https://neuroverse.tatamotors.com/code-tts/text_to_speech"
+
+    # Document verification configuration
+    DOCUMENT_VERIFICATION_INLINE_QUEUE: bool = True
+    DOCUMENT_VERIFICATION_MAX_RETRIES: int = 3
+    DOCUMENT_VERIFICATION_PROVIDER_TIMEOUT_SECONDS: int = 15
+    OCR_PROVIDER: str = "mock"
+    OCR_API_KEY: Optional[str] = None
+    QR_VERIFICATION_PROVIDER: str = "mock"
+    DIGITAL_SIGNATURE_PROVIDER: str = "mock"
+    DIGILOCKER_CLIENT_ID: Optional[str] = None
+    DIGILOCKER_CLIENT_SECRET: Optional[str] = None
+    PAN_VERIFICATION_API_KEY: Optional[str] = None
+    UNIVERSITY_VERIFICATION_API_KEY: Optional[str] = None
+    DOCUMENT_RETENTION_DAYS: int = 2555
+    DOCUMENT_STORAGE_PRIVATE: bool = True
  
  
     ## Mongo Conversation Logging

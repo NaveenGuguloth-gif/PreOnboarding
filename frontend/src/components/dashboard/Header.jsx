@@ -7,6 +7,7 @@ const titles = {
   "/dashboard":             "Overview",
   "/dashboard/documents":   "Documents",
   "/dashboard/learning":    "Learning",
+  "/dashboard/plant-map":   "Plant Map",
   "/dashboard/relocation":  "Relocation Support",
   "/dashboard/notifications": "Notification Center",
   "/dashboard/assistant":   "AI Assistant",

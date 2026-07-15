@@ -34,7 +34,6 @@ export default function HrDashboard() {
   const [departmentFilter, setDepartmentFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
   const [stageFilter, setStageFilter] = useState("All");
-  const [alertFilter, setAlertFilter] = useState("all");
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateForm, setCandidateForm] = useState(emptyCandidate);
   const [notice, setNotice] = useState("");
@@ -101,9 +100,6 @@ export default function HrDashboard() {
     () => ["All", ...Array.from(new Set(candidates.map((candidate) => candidate.current_stage || candidate.hr_status).filter(Boolean))).sort()],
     [candidates]
   );
-
-  const hrAlerts = useMemo(() => buildHrAlerts(filteredCandidates), [filteredCandidates]);
-  const dueReminders = useMemo(() => filteredCandidates.filter(isReminderDue), [filteredCandidates]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -179,13 +175,6 @@ export default function HrDashboard() {
   const notifyCandidate = async (candidate) => {
     await hrApi.notifyCandidate(candidate.id);
     setNotice(`Reminder sent to ${candidate.name}.`);
-    await loadDashboard();
-  };
-
-  const runDueReminders = async () => {
-    const due = filteredCandidates.filter(isReminderDue);
-    await Promise.all(due.map((candidate) => hrApi.notifyCandidate(candidate.id)));
-    setNotice(`Smart reminders sent to ${due.length} due employee${due.length === 1 ? "" : "s"}.`);
     await loadDashboard();
   };
 
@@ -281,11 +270,6 @@ export default function HrDashboard() {
         {kpiMeta.map((item) => (
           <KpiCard analytics={analytics} item={item} key={item.key} />
         ))}
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        <HrNotificationCenter activeFilter={alertFilter} alerts={hrAlerts} onFilter={setAlertFilter} />
-        <SmartReminderEngine dueCount={dueReminders.length} onRun={runDueReminders} />
       </section>
 
       <section className="overflow-hidden rounded-xl border border-gray-800 bg-[#0b1020] shadow-2xl shadow-black/20">
@@ -455,89 +439,6 @@ function FilterSelect({ label, onChange, options, value }) {
   );
 }
 
-function HrNotificationCenter({ activeFilter, alerts, onFilter }) {
-  const filters = [
-    ["all", "All"],
-    ["high-risk", "High Risk"],
-    ["joining-soon", "Joining Soon"],
-    ["documents", "Documents Pending"],
-    ["learning", "Learning Pending"],
-    ["inactive", "Inactive Employees"],
-    ["department", "Department-wise"],
-  ];
-  const filteredAlerts = alerts.filter((alert) => activeFilter === "all" || alert.filter === activeFilter);
-
-  return (
-    <section className="rounded-xl border border-gray-800 bg-[#0b1020] p-4 shadow-lg shadow-black/10">
-      <p className="text-xs font-semibold uppercase tracking-wider text-brand-300">Notification Center</p>
-      <h2 className="mt-1 text-lg font-semibold text-white">HR alerts</h2>
-      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-        {filters.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => onFilter(key)}
-            className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
-              activeFilter === key ? "border-brand-700 bg-brand-700 text-white" : "border-gray-800 bg-gray-950/60 text-gray-400 hover:text-white"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
-        {filteredAlerts.length === 0 ? (
-          <p className="rounded-lg border border-gray-800 bg-gray-950/50 px-4 py-5 text-sm text-gray-400">No alerts right now.</p>
-        ) : (
-          filteredAlerts.map((alert) => (
-            <div key={alert.id} className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-white">{alert.title}</p>
-                <Badge color={alert.color}>{alert.type}</Badge>
-              </div>
-              <p className="mt-1 text-xs text-gray-400">{alert.detail}</p>
-            </div>
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-function SmartReminderEngine({ dueCount, onRun }) {
-  const rules = [
-    ["14 days before joining", "Welcome reminder and profile checklist"],
-    ["7 days before joining", "Document and learning reminder"],
-    ["3 days before joining", "Readiness warning for pending tasks"],
-    ["1 day before joining", "Final joining-day reminder"],
-  ];
-
-  return (
-    <section className="rounded-xl border border-gray-800 bg-[#0b1020] p-4 shadow-lg shadow-black/10">
-      <p className="text-xs font-semibold uppercase tracking-wider text-brand-300">Smart Reminder Engine</p>
-      <div className="mt-1 flex items-start justify-between gap-3">
-        <h2 className="text-lg font-semibold text-white">Automatic reminder rules</h2>
-        <Badge color={dueCount ? "yellow" : "green"}>{dueCount} due</Badge>
-      </div>
-      <div className="mt-4 space-y-2">
-        {rules.map(([when, message]) => (
-          <div key={when} className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
-            <p className="text-sm font-semibold text-white">{when}</p>
-            <p className="mt-1 text-xs text-gray-400">{message}</p>
-          </div>
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={onRun}
-        className="mt-4 w-full rounded-lg border border-amber-700/70 px-3 py-2 text-sm font-semibold text-amber-300 transition hover:bg-amber-950/40"
-      >
-        Run due reminders
-      </button>
-    </section>
-  );
-}
-
 function MiniMetric({ label, value }) {
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
@@ -558,50 +459,6 @@ function joiningCountdown(candidate) {
 
 function learningPercent(candidate) {
   return candidate.learning_completion ?? candidate.learning_progress ?? 0;
-}
-
-function daysSince(value) {
-  if (!value) return 99;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 99;
-  return Math.floor((Date.now() - date.getTime()) / 86400000);
-}
-
-function buildHrAlerts(candidates) {
-  const alerts = [];
-  candidates.forEach((candidate) => {
-    const learning = learningPercent(candidate);
-    const name = candidate.name || "Employee";
-    if ((candidate.document_completion ?? 0) > 0 && (candidate.document_completion ?? 0) < 100) {
-      alerts.push({ id: `${candidate.id}-docs`, filter: "documents", type: "Docs", color: "yellow", title: "Documents uploaded", detail: `${name} has documents waiting for HR review.` });
-    }
-    if ((candidate.document_completion ?? 0) === 0) {
-      alerts.push({ id: `${candidate.id}-docs-missing`, filter: "documents", type: "Docs", color: "red", title: "Documents pending", detail: `${name} has not submitted mandatory documents.` });
-    }
-    if (learning < 100) {
-      alerts.push({ id: `${candidate.id}-learning-pending`, filter: "learning", type: "Learning", color: "yellow", title: "Learning pending", detail: `${name} still has learning modules to complete.` });
-    }
-    if (learning >= 100) {
-      alerts.push({ id: `${candidate.id}-learning`, filter: "learning", type: "Learning", color: "green", title: "Learning completed", detail: `${name} completed all assigned learning modules.` });
-    }
-    if ((candidate.readiness_score ?? 0) >= 100) {
-      alerts.push({ id: `${candidate.id}-ready`, filter: "department", type: "Ready", color: "green", title: "Readiness reached 100%", detail: `${name} is ready for joining.` });
-    }
-    if (daysSince(candidate.updated_at || candidate.created_at) >= 4) {
-      alerts.push({ id: `${candidate.id}-inactive`, filter: "inactive", type: "Inactive", color: "red", title: "Employee inactive", detail: `${name} has no activity for several days.` });
-    }
-    if ((candidate.joining_days_remaining ?? 99) >= 0 && (candidate.joining_days_remaining ?? 99) <= 7) {
-      alerts.push({ id: `${candidate.id}-joining`, filter: "joining-soon", type: "Joining", color: "yellow", title: "Joining date approaching", detail: `${name} joins ${joiningCountdown(candidate).toLowerCase()}.` });
-    }
-    if (candidate.needs_attention) {
-      alerts.push({ id: `${candidate.id}-attention`, filter: "high-risk", type: "Attention", color: "red", title: "Employee needs attention", detail: `${name} has pending onboarding tasks near joining.` });
-    }
-  });
-  return alerts;
-}
-
-function isReminderDue(candidate) {
-  return [14, 7, 3, 1].includes(candidate.joining_days_remaining ?? -1) && (candidate.readiness_score ?? 0) < 100;
 }
 
 function paginationButtons(pagination) {

@@ -40,12 +40,9 @@ const dayOneTimeline = [
 ];
 
 const welcomeKitItems = [
-  { id: "laptop", label: "Laptop allocation", status: "In progress", detail: "IT will confirm device handover before joining." },
-  { id: "id_card", label: "ID card", status: "Pending", detail: "Printed after final document verification." },
-  { id: "access_card", label: "Access card", status: "Pending", detail: "Activated for assigned plant/building access." },
-  { id: "email", label: "Email creation", status: "Ready", detail: "Corporate email setup is queued by IT." },
-  { id: "software", label: "Software setup", status: "In progress", detail: "Role-based tools and access requests are being prepared." },
-  { id: "parking", label: "Parking pass", status: "Optional", detail: "Issued if parking is requested and approved." },
+  { id: "employee_id", label: "Employee ID", detail: "Tick once HR has handed over your employee identity document/card." },
+  { id: "official_email", label: "Official Email", detail: "Tick once your corporate email account is active and accessible." },
+  { id: "laptop", label: "Laptop", detail: "Tick once you have physically received your assigned laptop." },
 ];
 
 export default function Dashboard() {
@@ -55,6 +52,7 @@ export default function Dashboard() {
   const [peerQuery, setPeerQuery] = useState("");
   const [selectedPeer, setSelectedPeer] = useState(null);
   const [savingProfile, setSavingProfile] = useState("");
+  const [savingKitItem, setSavingKitItem] = useState("");
   const [loading, setLoading] = useState(true);
   const [openSections, setOpenSections] = useState({
     day1: true,
@@ -65,12 +63,15 @@ export default function Dashboard() {
     joining: true,
   });
 
-  useEffect(() => {
+  const loadDashboard = () =>
     Promise.all([candidateApi.getMetrics(), candidateApi.listPeers()])
       .then(([metricsResponse, peersResponse]) => {
         setMetrics(metricsResponse.data);
         setPeers(peersResponse.data?.peers ?? []);
-      })
+      });
+
+  useEffect(() => {
+    loadDashboard()
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -117,8 +118,8 @@ export default function Dashboard() {
   });
   const visibleWelcomeKitItems = welcomeKitItems.map((item) => ({
     ...item,
-    status: welcomeKitAssignment[item.id] ? "Ready" : "Pending",
-    detail: welcomeKitAssignment[item.id] ? "Confirmed by HR for your joining." : item.detail,
+    confirmed: Boolean(welcomeKitAssignment[item.id]),
+    status: welcomeKitAssignment[item.id] ? "Received" : "Awaiting confirmation",
   }));
   const toggleSection = (id) => setOpenSections((current) => ({ ...current, [id]: !current[id] }));
   const updateProfileSection = async (id, checked) => {
@@ -141,6 +142,30 @@ export default function Dashboard() {
       setMetrics(refreshed.data);
     } finally {
       setSavingProfile("");
+    }
+  };
+  const updateWelcomeKitItem = async (id, checked) => {
+    const nextKit = { ...welcomeKitAssignment, [id]: checked };
+    const confirmedCount = welcomeKitItems.filter((item) => nextKit[item.id]).length;
+    setSavingKitItem(id);
+    setMetrics((current) => ({
+      ...current,
+      welcomeKitAssignment: nextKit,
+      welcomeKit: {
+        ...(current?.welcomeKit ?? {}),
+        status: confirmedCount === welcomeKitItems.length ? "received" : (confirmedCount ? "partially_received" : "not_confirmed"),
+        items: nextKit,
+      },
+    }));
+    try {
+      await candidateApi.updateProfile({
+        welcome_kit_assignment: nextKit,
+        last_activity: "Welcome kit receipt confirmed by employee",
+      });
+      const refreshed = await candidateApi.getMetrics();
+      setMetrics(refreshed.data);
+    } finally {
+      setSavingKitItem("");
     }
   };
 
@@ -225,17 +250,22 @@ export default function Dashboard() {
         <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-indigo-400">Welcome Kit Tracker</p>
-            <h3 className="mt-1 text-xl font-semibold text-white">Day-one assets and access</h3>
-            <p className="mt-1 text-sm text-gray-400">Track laptop, cards, email, software, and parking readiness before arrival.</p>
+            <h3 className="mt-1 text-xl font-semibold text-white">Confirm received onboarding items</h3>
+            <p className="mt-1 text-sm text-gray-400">Tick each item only after you have received or activated it.</p>
           </div>
           <span className="inline-flex w-fit rounded-full border border-gray-800 px-3 py-1 text-sm font-semibold text-gray-500">
-            {visibleWelcomeKitItems.filter((item) => item.status === "Ready").length}/{visibleWelcomeKitItems.length} ready
+            {visibleWelcomeKitItems.filter((item) => item.confirmed).length}/{visibleWelcomeKitItems.length} confirmed
           </span>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visibleWelcomeKitItems.map((item) => (
-            <WelcomeKitItem item={item} key={item.id} />
+            <WelcomeKitItem
+              item={item}
+              key={item.id}
+              loading={savingKitItem === item.id}
+              onChange={(checked) => updateWelcomeKitItem(item.id, checked)}
+            />
           ))}
         </div>
       </EmployeeSection>
@@ -470,26 +500,33 @@ function BuddyAvatar({ name }) {
   );
 }
 
-function WelcomeKitItem({ item }) {
+function WelcomeKitItem({ item, loading, onChange }) {
   const statusClass = {
-    Ready: "border-emerald-700 bg-emerald-50 text-emerald-700",
-    "In progress": "border-blue-700 bg-blue-50 text-blue-700",
-    Pending: "border-amber-700 bg-amber-50 text-amber-700",
-    Optional: "border-gray-700 bg-gray-50 text-gray-700",
+    Received: "border-emerald-700 bg-emerald-50 text-emerald-700",
+    "Awaiting confirmation": "border-amber-700 bg-amber-50 text-amber-700",
   }[item.status] ?? "border-gray-800 text-gray-500";
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+    <label className="flex min-h-36 cursor-pointer flex-col justify-between rounded-lg border border-gray-800 bg-gray-950/60 p-4 transition-colors hover:border-gray-700">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-white">{item.label}</p>
-          <p className="mt-1 text-sm leading-5 text-gray-400">{item.detail}</p>
+        <div className="flex min-w-0 gap-3">
+          <input
+            checked={item.confirmed}
+            className="mt-1 h-4 w-4 rounded border-gray-700 bg-gray-900 accent-indigo-500"
+            disabled={loading}
+            onChange={(event) => onChange(event.target.checked)}
+            type="checkbox"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-white">{item.label}</span>
+            <span className="mt-1 block text-sm leading-5 text-gray-400">{item.detail}</span>
+          </span>
         </div>
         <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass}`}>
-          {item.status}
+          {loading ? "Saving..." : item.status}
         </span>
       </div>
-    </div>
+    </label>
   );
 }
 

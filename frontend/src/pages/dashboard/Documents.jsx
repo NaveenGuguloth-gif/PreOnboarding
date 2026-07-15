@@ -5,6 +5,14 @@ import { Badge } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
 const statusColor = { missing: "red", pending: "red", submitted: "yellow", uploaded: "yellow", verified: "green", rejected: "red" };
+const verificationColor = {
+  PROCESSING: "blue",
+  VERIFIED: "green",
+  PROVISIONALLY_VERIFIED: "yellow",
+  NEEDS_HR_REVIEW: "yellow",
+  REJECTED: "red",
+  VERIFICATION_UNAVAILABLE: "gray",
+};
 
 // Each status gets a dot + accent so the list reads at a glance,
 // independent of the Badge component's fixed palette.
@@ -17,13 +25,6 @@ const STATUS_THEME = {
   rejected: { accent: "#EF4444", dot: "bg-rose-500" },
 };
 
-const validationTips = [
-  { id: "clear", title: "Use clear scans", description: "Text and numbers are readable." },
-  { id: "match", title: "Match profile details", description: "Name matches your profile." },
-  { id: "fresh", title: "Check file freshness", description: "Bank/address proof is recent." },
-  { id: "originals", title: "Keep originals ready", description: "Originals are ready for day one." },
-];
-
 export default function Documents() {
   const { user } = useAuth();
   const [docs, setDocs] = useState([]);
@@ -33,7 +34,6 @@ export default function Documents() {
   const [removing, setRemoving] = useState(null);
   const [error, setError] = useState("");
   const [failedUpload, setFailedUpload] = useState(null);
-  const [checkedTips, setCheckedTips] = useState({});
   const candidateId = user?.id ?? user?.employeeId ?? user?.employee_id ?? "demo";
 
   const load = () =>
@@ -93,11 +93,9 @@ export default function Documents() {
       required: docs.length,
       submitted,
       pending: docs.length - submitted,
-      verified: docs.filter((d) => d.status === "verified").length,
+      verified: docs.filter((d) => ["verified", "VERIFIED", "PROVISIONALLY_VERIFIED"].includes(d.status) || ["VERIFIED", "PROVISIONALLY_VERIFIED"].includes(d.verification_status)).length,
     };
   }, [docs]);
-
-  const tipsChecked = Object.values(checkedTips).filter(Boolean).length;
 
   if (loading) return <LoadingSpinner />;
 
@@ -154,34 +152,6 @@ export default function Documents() {
           uploading={uploading}
         />
       </DocumentPanel>
-
-      <DocumentPanel>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <Badge color="blue">AI validation</Badge>
-            <h3 className="mt-3 text-lg font-semibold tracking-tight text-white">Smart document pre-check</h3>
-          </div>
-          <Badge color="gray">{tipsChecked}/{validationTips.length} checked</Badge>
-        </div>
-        <div className="h-1.5 mb-4 overflow-hidden rounded-full bg-gray-800">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-500"
-            style={{ width: `${(tipsChecked / validationTips.length) * 100}%` }}
-          />
-        </div>
-        <div className="grid gap-2">
-          {validationTips.map((item) => (
-            <ValidationCheck
-              checked={Boolean(checkedTips[item.id])}
-              item={item}
-              key={item.id}
-              onChange={() =>
-                setCheckedTips((current) => ({ ...current, [item.id]: !current[item.id] }))
-              }
-            />
-          ))}
-        </div>
-      </DocumentPanel>
     </div>
   );
 }
@@ -215,6 +185,9 @@ function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, 
                   {document.approval_status ? <span>Approval: {document.approval_status}</span> : null}
                   {document.rejectionReason || document.rejection_reason ? <span className="text-rose-400">Rejected: {document.rejectionReason || document.rejection_reason}</span> : null}
                 </div>
+                {document.file_name ? (
+                  <VerificationSummary document={document} />
+                ) : null}
                 {uploading === document.id ? (
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-800">
                     <div
@@ -264,29 +237,41 @@ function DocumentUploadPanel({ documents, handleRemove, handleUpload, removing, 
   );
 }
 
+function VerificationSummary({ document }) {
+  const status = document.verification_status || document.verificationStatus || (document.status === "verified" ? "VERIFIED" : "");
+  const explanation = document.verification_explanation || document.verificationExplanation || "";
+  const score = document.overall_score ?? document.overallScore;
+  const rules = document.risk_rules || document.riskRules || [];
+  const completed = status && status !== "PROCESSING";
+  return (
+    <div className="mt-3 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge color={verificationColor[status] ?? "gray"}>{status ? formatStatus(status) : "Uploaded"}</Badge>
+        <span className="text-xs text-gray-500">
+          Uploaded / Processing / {completed ? "Verification completed" : "Verification pending"}
+        </span>
+        {score !== null && score !== undefined ? <span className="text-xs text-gray-400">Score: {score}/100</span> : null}
+      </div>
+      {explanation ? <p className="mt-2 text-xs leading-5 text-gray-400">{explanation}</p> : null}
+      {rules.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {rules.slice(0, 3).map((rule, index) => (
+            <span key={`${rule.rule || rule.check_type}-${index}`} className="rounded-full border border-gray-700 px-2 py-1 text-[11px] text-gray-400">
+              {formatStatus(rule.rule || rule.check_type)}: {formatStatus(rule.status)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DocumentStat({ label, value, accent }) {
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4" style={{ borderTopColor: accent, borderTopWidth: 3 }}>
       <p className="text-sm text-gray-400">{label}</p>
       <strong className="mt-3 block text-3xl font-semibold text-white">{value}</strong>
     </div>
-  );
-}
-
-function ValidationCheck({ checked, item, onChange }) {
-  return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-800 bg-gray-950/60 p-3 transition-colors hover:border-gray-700">
-      <input
-        checked={checked}
-        className="mt-0.5 h-4 w-4 rounded border-gray-700 bg-gray-900 accent-indigo-500"
-        onChange={onChange}
-        type="checkbox"
-      />
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-white">{item.title}</span>
-        <span className="mt-0.5 block text-xs text-gray-400">{item.description}</span>
-      </span>
-    </label>
   );
 }
 

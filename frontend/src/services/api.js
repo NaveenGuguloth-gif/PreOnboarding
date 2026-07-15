@@ -4,6 +4,7 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
 const STORAGE_KEY = "preonboarding_demo_state";
 const SESSION_KEY = "preonboarding_demo_session";
 const LEARNING_CONTENT_TYPES = new Set(["video", "pdf", "image", "link"]);
+const WELCOME_KIT_ITEM_IDS = ["employee_id", "official_email", "laptop"];
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -410,68 +411,7 @@ const demoState = {
       "Carry original ID, education certificates, and two passport photos.",
       "Save the plant reporting address and emergency contact offline.",
     ],
-    resources: [
-      {
-        id: "stay-guest-house",
-        category: "Accommodation",
-        title: "Company guest house helpdesk",
-        name: "Company guest house helpdesk",
-        description: "Temporary stay support for new joiners while permanent accommodation is finalized.",
-        address: "Pimpri-Chinchwad, near Plant Gate 3",
-        contact: "travel.desk@tatamotors.com",
-        distance_km: 2.4,
-      },
-      {
-        id: "stay-apartments",
-        category: "Accommodation",
-        title: "Approved short-stay apartments",
-        name: "Approved short-stay apartments",
-        description: "HR-reviewed apartment options suitable for the first month after relocation.",
-        address: "Akurdi and Nigdi residential cluster",
-        contact: "+91 20 4100 2211",
-        distance_km: 4.8,
-      },
-      {
-        id: "transport-shuttle",
-        category: "Transport",
-        title: "Plant shuttle from Pimpri station",
-        name: "Plant shuttle from Pimpri station",
-        description: "Morning shuttle route aligned with plant reporting windows for new joiners.",
-        address: "Pimpri railway station east exit",
-        contact: "transport.support@tatamotors.com",
-        distance_km: 1.2,
-      },
-      {
-        id: "transport-airport",
-        category: "Transport",
-        title: "Airport prepaid cab counter",
-        name: "Airport prepaid cab counter",
-        description: "Reliable airport-to-plant transfer option with prepaid fare confirmation.",
-        address: "Pune International Airport arrivals",
-        contact: "+91 20 6680 0000",
-        distance_km: 18.5,
-      },
-      {
-        id: "health-clinic",
-        category: "Health",
-        title: "Nearest medical clinic",
-        name: "Nearest medical clinic",
-        description: "Primary care clinic for first-aid, basic consultation, and emergency referrals.",
-        address: "Old Mumbai-Pune Highway, Pimpri",
-        contact: "+91 20 4012 1190",
-        distance_km: 1.9,
-      },
-      {
-        id: "bank-branch",
-        category: "Banking",
-        title: "Bank branch and ATM",
-        name: "Bank branch and ATM",
-        description: "Nearby branch for salary account documentation and cash withdrawal.",
-        address: "Pimpri main road",
-        contact: "+91 20 4099 3310",
-        distance_km: 0.8,
-      },
-    ],
+    resources: [],
   },
   candidates: [
     {
@@ -531,6 +471,8 @@ const reminderMessage =
   "Your joining date is coming soon. Please complete your pending onboarding activities, including profile details, document upload, learning modules, and readiness tasks before your joining date.";
 
 const clampPercent = (value) => Math.min(100, Math.max(0, Math.round(value || 0)));
+const normalizeWelcomeKitItems = (items = {}) =>
+  WELCOME_KIT_ITEM_IDS.reduce((result, id) => ({ ...result, [id]: Boolean(items?.[id]) }), {});
 const profileSectionIds = [
   "personal_info",
   "emergency_contacts",
@@ -591,6 +533,8 @@ function normalizeDocumentRow(doc, index = 0) {
   const updatedAt = doc.updated_at || doc.updatedAt || doc.verifiedAt || uploadedAt || "";
   const uploadedBy = doc.uploaded_by || doc.uploadedBy || "Candidate";
   const versionNumber = doc.version || doc.version_number || (doc.file_name ? 1 : 0);
+  const verificationStatus = doc.verification_status || doc.verificationStatus || "";
+  const overallScore = doc.overall_score ?? doc.overallScore ?? null;
   const baseVersion = doc.file_name
     ? {
         version: versionNumber || 1,
@@ -652,6 +596,22 @@ function normalizeDocumentRow(doc, index = 0) {
     version: versionNumber,
     versions,
     auditTrail,
+    verification_status: verificationStatus,
+    verificationStatus,
+    verification_level: doc.verification_level || doc.verificationLevel || "",
+    verificationLevel: doc.verification_level || doc.verificationLevel || "",
+    overall_score: overallScore,
+    overallScore,
+    processed_at: doc.processed_at || doc.processedAt || "",
+    processedAt: doc.processed_at || doc.processedAt || "",
+    verification_explanation: doc.verification_explanation || doc.verificationExplanation || "",
+    verificationExplanation: doc.verification_explanation || doc.verificationExplanation || "",
+    extracted_fields: doc.extracted_fields || doc.extractedFields || {},
+    extractedFields: doc.extracted_fields || doc.extractedFields || {},
+    extraction_confidence: doc.extraction_confidence || doc.extractionConfidence || {},
+    extractionConfidence: doc.extraction_confidence || doc.extractionConfidence || {},
+    risk_rules: doc.risk_rules || doc.riskRules || [],
+    riskRules: doc.risk_rules || doc.riskRules || [],
   };
 }
 
@@ -973,7 +933,7 @@ function metricsFromState() {
     ...progress,
     daysRemaining,
     teamAssignment: candidate?.team_assignment ?? null,
-    welcomeKitAssignment: candidate?.welcome_kit_assignment ?? {},
+    welcomeKitAssignment: normalizeWelcomeKitItems(candidate?.welcomeKit?.items ?? candidate?.welcome_kit_assignment),
   };
 }
 
@@ -1007,163 +967,6 @@ function modulesFromHrTasks() {
   const state = getState();
   const user = currentUser();
   return modulesForUser(state, user);
-}
-
-function relocationSuggestionsFor(location) {
-  const area = location?.trim() || "your preferred area";
-  return [
-    {
-      id: "fallback-pgs",
-      category: "Nearby PGs",
-      title: `PG stays near ${area}`,
-      description: "Meal-inclusive PGs and hostels for first-month relocation.",
-      address: `${area} residential clusters`,
-      contact: "+91 20 4100 2231",
-      distance_km: 1.2,
-      plant_distance_km: 3.4,
-      monthly_cost: "₹8,000-₹14,000/month",
-      commute_time: "15-25 min to plant",
-    },
-    {
-      id: "fallback-flats",
-      category: "Flats",
-      title: `Shared flats and 1BHKs near ${area}`,
-      description: "Longer-stay housing options with deposit and commute comparison.",
-      address: `${area} apartment belt`,
-      contact: "+91 20 4100 2242",
-      distance_km: 1.8,
-      plant_distance_km: 4.1,
-      monthly_cost: "₹16,000-₹28,000/month",
-      commute_time: "20-35 min to plant",
-    },
-    {
-      id: "fallback-hotels",
-      category: "Hotels",
-      title: `Short-stay hotels near ${area}`,
-      description: "Arrival-week hotels for employees and family travel.",
-      address: `${area} main road`,
-      contact: "+91 20 4100 2255",
-      distance_km: 2.0,
-      plant_distance_km: 4.8,
-      monthly_cost: "₹1,800-₹4,500/night",
-      commute_time: "20-40 min to plant",
-    },
-    {
-      id: "fallback-hospitals",
-      category: "Health",
-      title: `Hospitals and clinics near ${area}`,
-      description: "Save emergency care, general physician, pharmacy, and diagnostics options.",
-      address: `${area} main road and nearby market`,
-      contact: "+91 20 4100 2290",
-      distance_km: 2.0,
-      plant_distance_km: 3.8,
-      monthly_cost: "Consultation ₹500-₹1,200",
-      commute_time: "15-30 min to plant",
-    },
-    {
-      id: "fallback-gyms",
-      category: "Fitness",
-      title: `Gyms near ${area}`,
-      description: "Look for monthly plans, trial sessions, lockers, and walkable distance.",
-      address: `${area} market / high-street area`,
-      contact: "+91 20 4100 2266",
-      distance_km: 1.0,
-      plant_distance_km: 3.2,
-      monthly_cost: "₹1,200-₹2,500/month",
-      commute_time: "10-25 min to plant",
-    },
-    {
-      id: "fallback-schools",
-      category: "Schools",
-      title: `Schools near ${area}`,
-      description: "Education options for employees relocating with family.",
-      address: `${area} education corridor`,
-      contact: "+91 20 4100 2277",
-      distance_km: 2.8,
-      plant_distance_km: 5.6,
-      monthly_cost: "Fees vary by school",
-      commute_time: "25-45 min to plant",
-    },
-    {
-      id: "fallback-malls",
-      category: "Shopping Malls",
-      title: `Shopping malls near ${area}`,
-      description: "Food, household setup, electronics, and weekend shopping.",
-      address: `${area} retail zone`,
-      contact: "+91 20 4100 2288",
-      distance_km: 3.1,
-      plant_distance_km: 6.2,
-      monthly_cost: "Lifestyle spend varies",
-      commute_time: "25-45 min to plant",
-    },
-    {
-      id: "fallback-essentials",
-      category: "Essentials",
-      title: `Groceries, pharmacy, and daily needs near ${area}`,
-      description: "Shortlist grocery stores, pharmacies, laundry, food options, and setup shops.",
-      address: `${area} local market`,
-      contact: "Save two backup options",
-      distance_km: 0.8,
-      plant_distance_km: 3.0,
-      monthly_cost: "₹6,000-₹12,000/month basics",
-      commute_time: "10-20 min to plant",
-    },
-    {
-      id: "fallback-transport",
-      category: "Transport",
-      title: `Transportation from ${area}`,
-      description: "Compare shuttle, rail, bus, auto, cab pooling, and first-week commute time.",
-      address: `${area} commute corridor`,
-      contact: "transport.support@tatamotors.com",
-      distance_km: 3.2,
-      plant_distance_km: 3.2,
-      monthly_cost: "₹1,500-₹5,000/month commute",
-      commute_time: "15-40 min to plant",
-    },
-  ];
-}
-
-function relocationCategoriesFor(location) {
-  const area = location?.trim() || "your preferred area";
-  return [
-    {
-      key: "housing",
-      title: "PGs, Flats, and Hotels",
-      columns: ["Rank", "Type", "Name", "Plant Distance", "Travel Time", "Cost", "Contact"],
-      items: [
-        { Rank: "1", Type: "PG", Name: `PG stays near ${area}`, "Plant Distance": "3.4 km", "Travel Time": "15-25 min", Cost: "₹8,000-₹14,000/month", Contact: "+91 20 4100 2231" },
-        { Rank: "2", Type: "Flat", Name: `Shared flats near ${area}`, "Plant Distance": "4.1 km", "Travel Time": "20-35 min", Cost: "₹16,000-₹28,000/month", Contact: "+91 20 4100 2242" },
-        { Rank: "3", Type: "Hotel", Name: `Short-stay hotels near ${area}`, "Plant Distance": "4.8 km", "Travel Time": "20-40 min", Cost: "₹1,800-₹4,500/night", Contact: "+91 20 4100 2255" },
-      ],
-    },
-    {
-      key: "hospitals",
-      title: "Hospitals",
-      columns: ["Rank", "Name", "Plant Distance", "Emergency", "Contact", "Cost"],
-      items: [
-        { Rank: "1", Name: `Hospitals near ${area}`, "Plant Distance": "3.8 km", Emergency: "24x7 emergency", Contact: "+91 20 4100 2290", Cost: "Consultation ₹500-₹1,200" },
-      ],
-    },
-    {
-      key: "lifestyle",
-      title: "Gyms, Schools, and Shopping",
-      columns: ["Rank", "Type", "Name", "Plant Distance", "Monthly Cost", "Contact"],
-      items: [
-        { Rank: "1", Type: "Gym", Name: `Gyms near ${area}`, "Plant Distance": "3.2 km", "Monthly Cost": "₹1,200-₹2,500/month", Contact: "+91 20 4100 2266" },
-        { Rank: "2", Type: "School", Name: `Schools near ${area}`, "Plant Distance": "5.6 km", "Monthly Cost": "Fees vary", Contact: "+91 20 4100 2277" },
-        { Rank: "3", Type: "Mall", Name: `Shopping malls near ${area}`, "Plant Distance": "6.2 km", "Monthly Cost": "Lifestyle spend varies", Contact: "+91 20 4100 2288" },
-      ],
-    },
-    {
-      key: "transport",
-      title: "Transportation and Cost of Living",
-      columns: ["Rank", "Name", "Plant Distance", "Travel Time", "Monthly Cost", "Contact"],
-      items: [
-        { Rank: "1", Name: `Transport from ${area}`, "Plant Distance": "3.2 km", "Travel Time": "15-40 min", "Monthly Cost": "₹1,500-₹5,000/month", Contact: "transport.support@tatamotors.com" },
-        { Rank: "2", Name: "Daily essentials", "Plant Distance": "3.0 km", "Travel Time": "10-20 min", "Monthly Cost": "₹6,000-₹12,000 basics", Contact: "Save two local options" },
-      ],
-    },
-  ];
 }
 
 function assistantReply(message) {
@@ -1361,19 +1164,31 @@ export const candidateApi = {
         const state = getState();
         const user = currentUser();
         if (!user) return { ok: true };
-        state.users = state.users.map((item) => (item.id === user.id ? { ...item, ...data } : item));
+        const kitItems = data.welcome_kit_assignment ? normalizeWelcomeKitItems(data.welcome_kit_assignment) : null;
+        const userUpdate = { ...data };
+        if (kitItems) {
+          userUpdate.welcome_kit_assignment = kitItems;
+          userUpdate.welcomeKit = { items: kitItems };
+        }
+        state.users = state.users.map((item) => (item.id === user.id ? { ...item, ...userUpdate } : item));
         if (data.profileSections) {
           state.userProfileSections = {
             ...(state.userProfileSections ?? {}),
             [user.id]: data.profileSections,
           };
         }
+        const currentCandidate = state.candidates.find((candidate) => candidate.id === user.id);
         const profileCompletion = data.profileSections
           ? clampPercent((profileSectionIds.filter((id) => data.profileSections[id]).length / profileSectionIds.length) * 100)
-          : data.profile_completion ?? 100;
+          : data.profile_completion ?? currentCandidate?.profile_completion ?? 0;
         state.candidates = state.candidates.map((candidate) =>
           candidate.id === user.id
-            ? { ...candidate, ...data, profile_completion: profileCompletion, last_activity: "Profile updated" }
+            ? {
+                ...candidate,
+                ...userUpdate,
+                profile_completion: profileCompletion,
+                last_activity: kitItems ? "Welcome kit receipt confirmed by employee" : "Profile updated",
+              }
             : candidate
         );
         syncCandidateProgress(state, user.id);
@@ -1419,6 +1234,26 @@ export const documentsApi = {
             ? normalizeDocumentRow({
                 ...doc,
                 status: "uploaded",
+                verification_status: "PROVISIONALLY_VERIFIED",
+                verificationStatus: "PROVISIONALLY_VERIFIED",
+                verification_level: "automated",
+                verificationLevel: "automated",
+                overall_score: 72,
+                overallScore: 72,
+                processed_at: new Date().toISOString(),
+                processedAt: new Date().toISOString(),
+                verification_explanation: "Demo OCR/profile checks passed; no trusted issuer provider is configured.",
+                verificationExplanation: "Demo OCR/profile checks passed; no trusted issuer provider is configured.",
+                extracted_fields: { full_name: currentUser()?.name ?? currentUser()?.full_name ?? "Candidate" },
+                extractedFields: { full_name: currentUser()?.name ?? currentUser()?.full_name ?? "Candidate" },
+                risk_rules: [
+                  { rule: "profile_name_match", status: "VERIFIED", reason: "Extracted name compared with employee profile." },
+                  { rule: "trusted_source", status: "VERIFICATION_UNAVAILABLE", reason: "Trusted issuer provider is not configured." },
+                ],
+                riskRules: [
+                  { rule: "profile_name_match", status: "VERIFIED", reason: "Extracted name compared with employee profile." },
+                  { rule: "trusted_source", status: "VERIFICATION_UNAVAILABLE", reason: "Trusted issuer provider is not configured." },
+                ],
                 file_name: file?.name ?? "uploaded-file.pdf",
                 file_preview_url: filePreviewUrl,
                 fileUrl: filePreviewUrl,
@@ -1475,6 +1310,14 @@ export const documentsApi = {
             ? {
                 ...doc,
                 status: "missing",
+                verification_status: "",
+                verificationStatus: "",
+                verification_explanation: "",
+                verificationExplanation: "",
+                extracted_fields: {},
+                extractedFields: {},
+                risk_rules: [],
+                riskRules: [],
                 file_name: undefined,
                 uploaded_at: undefined,
               }
@@ -1485,6 +1328,33 @@ export const documentsApi = {
         setState(state);
         return { ok: true };
       }
+    ),
+  verification: (id, candidateId) =>
+    withFallback(
+      () => api.get(`/api/documents/${id}/verification`, { params: { candidate_id: candidateId ?? currentUser()?.id ?? "demo" } }),
+      () => {
+        const state = getState();
+        const doc = documentRowsForUser(state, candidateId ?? currentUser()?.id ?? "demo").find((item) => item.id === id);
+        return {
+          submission: doc,
+          extraction: { fields: doc?.extracted_fields ?? {}, confidence: doc?.extraction_confidence ?? {} },
+          checks: doc?.risk_rules ?? [],
+          provider_results: (doc?.risk_rules ?? []).filter((rule) => rule.status === "VERIFICATION_UNAVAILABLE"),
+          decision: {
+            status: doc?.verification_status,
+            level: doc?.verification_level,
+            overall_score: doc?.overall_score,
+            explanation: doc?.verification_explanation,
+          },
+          review_actions: [],
+          audit: doc?.auditTrail ?? [],
+        };
+      }
+    ),
+  retryVerification: (id, candidateId) =>
+    withFallback(
+      () => api.post(`/api/documents/${id}/verification/retry`, { candidate_id: candidateId ?? currentUser()?.id ?? "demo" }),
+      () => documentsApi.verification(id, candidateId)
     ),
 };
 
@@ -1533,25 +1403,13 @@ export const relocationApi = {
         location: data.location || data.destination_city,
         summary: {
           destination: data.location || data.destination_city,
-          overview: `Demo relocation suggestions for ${data.location || data.destination_city}.`,
+          overview: "Data unavailable. Configure the backend ChatGPT/OpenAI integration to gather and structure verified nearby places.",
         },
-        categories: [
-          {
-            key: "relocation-results",
-            title: "Relocation Results",
-            columns: ["Name", "Location", "Contact", "Distance"],
-            items: relocationSuggestionsFor(data.location || data.destination_city).map((item) => ({
-              Name: item.title,
-              Location: item.address || data.location || data.destination_city,
-              Contact: item.contact || "Not Available",
-              Distance: item.distance_km != null ? `${item.distance_km} km` : "Not Available",
-            })),
-          },
-        ],
+        categories: [],
         suggested_best_choice: {},
-        additional_insights: ["Verify addresses, contacts, and distance directly before booking."],
-        resources: relocationSuggestionsFor(data.location || data.destination_city),
-        source: "fallback",
+        additional_insights: [],
+        resources: [],
+        source: "unavailable",
       })
     ),
 };
@@ -1669,11 +1527,22 @@ export const hrApi = {
   getCandidate: (id) =>
     withFallback(
       () => api.get(`/api/hr/candidates/${id}`),
-      () => ({
-        candidate: getState().candidates.find((candidate) => candidate.id === id),
-        documents: documentRowsForUser(getState(), id),
-        modules: getState().modules,
-      })
+      () => {
+        const state = getState();
+        const candidate = state.candidates.find((item) => item.id === id);
+        const welcomeKitItems = normalizeWelcomeKitItems(candidate?.welcomeKit?.items ?? candidate?.welcome_kit_assignment);
+        return {
+          candidate: candidate
+            ? {
+                ...candidate,
+                welcome_kit_assignment: welcomeKitItems,
+                welcomeKit: { ...(candidate.welcomeKit ?? {}), items: welcomeKitItems },
+              }
+            : candidate,
+          documents: documentRowsForUser(state, id),
+          modules: state.modules,
+        };
+      }
     ),
   documentDownloadUrl: (fileUrl) =>
     fileUrl?.startsWith("http") || fileUrl?.startsWith("data:") || fileUrl?.startsWith("blob:") ? fileUrl : `${BASE_URL}${fileUrl}`,
@@ -1687,6 +1556,40 @@ export const hrApi = {
     const response = await request;
     return URL.createObjectURL(response.data);
   },
+  getDocumentVerification: (candidateId, requirementId) =>
+    withFallback(
+      () => api.get(`/api/hr/candidates/${candidateId}/documents/${requirementId}/verification`),
+      () => documentsApi.verification(requirementId, candidateId)
+    ),
+  retryDocumentVerification: (candidateId, requirementId) =>
+    withFallback(
+      () => api.post(`/api/hr/candidates/${candidateId}/documents/${requirementId}/verification/retry`),
+      () => documentsApi.retryVerification(requirementId, candidateId)
+    ),
+  listDocumentReviewCases: () =>
+    withFallback(
+      () => api.get("/api/hr/document-verification/review-cases"),
+      () => {
+        const state = getState();
+        const cases = [];
+        (state.candidates ?? []).forEach((candidate) => {
+          documentRowsForUser(state, candidate.id).forEach((doc) => {
+            if (["NEEDS_HR_REVIEW", "REJECTED", "VERIFICATION_UNAVAILABLE"].includes(doc.verification_status)) {
+              cases.push({
+                candidate_id: candidate.id,
+                candidate_name: candidate.name,
+                requirement_id: doc.id,
+                document_name: doc.name,
+                verification_status: doc.verification_status,
+                overall_score: doc.overall_score,
+                explanation: doc.verification_explanation,
+              });
+            }
+          });
+        });
+        return { cases };
+      }
+    ),
   reviewDocument: (candidateId, requirementId, data) =>
     withFallback(
       () => api.post(`/api/hr/candidates/${candidateId}/documents/${requirementId}/review`, data),
@@ -1700,6 +1603,12 @@ export const hrApi = {
             ? normalizeDocumentRow({
                 ...doc,
                 status,
+                verification_status: status === "verified" ? "VERIFIED" : "REJECTED",
+                verificationStatus: status === "verified" ? "VERIFIED" : "REJECTED",
+                verification_level: "manual_hr_review",
+                verificationLevel: "manual_hr_review",
+                verification_explanation: data.comments || (status === "verified" ? "HR manually approved this document." : "HR rejected this document and requested correction."),
+                verificationExplanation: data.comments || (status === "verified" ? "HR manually approved this document." : "HR rejected this document and requested correction."),
                 comments: data.comments || "",
                 rejectionReason: status === "rejected" ? data.comments || "Rejected by HR" : "",
                 verifiedBy: status === "verified" ? reviewer : "",
@@ -1776,11 +1685,12 @@ export const hrApi = {
       () => api.patch(`/api/hr/candidates/${id}`, data),
       () => {
         const state = getState();
+        const { welcome_kit_assignment, welcomeKit, ...hrEditableData } = data;
         state.candidates = state.candidates.map((candidate) =>
-          candidate.id === id ? { ...candidate, ...data } : candidate
+          candidate.id === id ? { ...candidate, ...hrEditableData } : candidate
         );
         state.users = state.users.map((user) =>
-          user.id === id ? { ...user, ...data } : user
+          user.id === id ? { ...user, ...hrEditableData } : user
         );
         setState(state);
         return { candidate: state.candidates.find((candidate) => candidate.id === id) };
