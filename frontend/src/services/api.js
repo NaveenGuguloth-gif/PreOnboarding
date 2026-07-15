@@ -3,6 +3,7 @@ import axios from "axios";
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
 const STORAGE_KEY = "preonboarding_demo_state";
 const SESSION_KEY = "preonboarding_demo_session";
+const LEARNING_CONTENT_TYPES = new Set(["video", "pdf", "image", "link"]);
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -144,9 +145,9 @@ const demoState = {
   ],
   tasks: [
     {
-      id: "task-orientation",
-      title: "Publish joining-day orientation",
-      description: "Share plant reporting guidance and welcome module with new joiners.",
+      id: "task-hr-video-day-one",
+      title: "Day-one plant orientation video",
+      description: "HR-uploaded video briefing covering gate entry, reporting flow, PPE basics, and first-day support contacts.",
       department: "All",
       version: "1.0",
       uploaded_by: "HR Learning Team",
@@ -154,36 +155,152 @@ const demoState = {
       mandatory: true,
       visibility: "employees",
       status: "published",
-      content_type: "document",
-      duration_minutes: 25,
+      content_type: "video",
+      duration_minutes: 6,
+      file_name: "day-one-plant-orientation.mp4",
+      file_url: "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_083109_283f3553-e28f-428b-a723-d639c617eb2b.mp4",
     },
     {
-      id: "task-safety",
-      title: "Review plant safety learning",
-      description: "Confirm safety module is assigned to plant-facing candidates.",
-      department: "Manufacturing",
-      version: "1.2",
-      uploaded_by: "Safety Team",
-      expiry_date: addDays(30),
+      id: "task-video-company-culture",
+      title: "Company Culture: How We Work",
+      description: "A concise video introduction to collaboration norms, ownership principles, and inclusive workplace behaviors.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "People Experience",
+      expiry_date: addDays(60),
       mandatory: true,
       visibility: "employees",
-      status: "draft",
+      status: "published",
       content_type: "video",
-      duration_minutes: 30,
+      duration_minutes: 8,
+      file_name: "company-culture-how-we-work.mp4",
+      file_url: "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260424_064411_9e9d7f84-9277-41f4-ab10-59172d89e6be.mp4",
     },
     {
-      id: "task-device",
-      title: "IT device readiness",
-      description: "Coordinate laptop, VPN, and tool access before joining date.",
-      department: "Vehicle Software",
+      id: "task-video-workplace-safety",
+      title: "Workplace Safety Essentials",
+      description: "Required safety orientation covering PPE, emergency exits, incident reporting, and shop-floor movement rules.",
+      department: "Manufacturing",
       version: "1.0",
-      uploaded_by: "IT Enablement",
-      expiry_date: addDays(18),
-      mandatory: false,
-      visibility: "hr",
+      uploaded_by: "Safety Team",
+      expiry_date: addDays(45),
+      mandatory: true,
+      visibility: "employees",
       status: "published",
-      content_type: "checklist",
-      duration_minutes: 15,
+      content_type: "video",
+      duration_minutes: 10,
+      file_name: "workplace-safety-essentials.mp4",
+      file_url: "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_083109_283f3553-e28f-428b-a723-d639c617eb2b.mp4",
+    },
+    {
+      id: "task-video-manufacturing-basics",
+      title: "Manufacturing Basics: From Line to Quality Gate",
+      description: "Overview of production flow, takt time, quality checkpoints, and escalation practices for plant-facing teams.",
+      department: "Manufacturing",
+      version: "1.0",
+      uploaded_by: "Manufacturing Academy",
+      expiry_date: addDays(60),
+      mandatory: false,
+      visibility: "employees",
+      status: "published",
+      content_type: "video",
+      duration_minutes: 12,
+      file_name: "manufacturing-basics-quality-gate.mp4",
+      file_url: "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260424_064411_9e9d7f84-9277-41f4-ab10-59172d89e6be.mp4",
+    },
+    {
+      id: "task-pdf-code-of-conduct",
+      title: "Code of Conduct Handbook",
+      description: "PDF handbook covering ethical decision-making, conflicts of interest, confidentiality, and escalation channels.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "Compliance Team",
+      expiry_date: addDays(90),
+      mandatory: true,
+      visibility: "employees",
+      status: "published",
+      content_type: "pdf",
+      duration_minutes: 18,
+      file_name: "code-of-conduct-handbook.pdf",
+      file_url: "https://www.tata.com/content/dam/tata/pdf/Tata-Code-of-Conduct.pdf",
+    },
+    {
+      id: "task-pdf-employee-benefits",
+      title: "Employee Benefits Overview",
+      description: "PDF guide summarizing health coverage, leave policies, wellness support, and employee assistance programs.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "HR Benefits Team",
+      expiry_date: addDays(90),
+      mandatory: false,
+      visibility: "employees",
+      status: "published",
+      content_type: "pdf",
+      duration_minutes: 12,
+      file_name: "employee-benefits-overview.pdf",
+      file_url: "https://www.tatamotors.com/wp-content/uploads/2024/06/annual-report-2023-24.pdf",
+    },
+    {
+      id: "task-image-safety-map",
+      title: "Plant Safety Zones Map",
+      description: "Visual reference for PPE zones, visitor walkways, assembly areas, and emergency response points.",
+      department: "Manufacturing",
+      version: "1.0",
+      uploaded_by: "Safety Team",
+      expiry_date: addDays(60),
+      mandatory: false,
+      visibility: "employees",
+      status: "published",
+      content_type: "image",
+      duration_minutes: 5,
+      file_name: "plant-safety-zones-map.jpeg",
+      file_url: "https://images.unsplash.com/photo-1581092335878-1c5f0f15664f?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      id: "task-image-cybersecurity-checklist",
+      title: "Cybersecurity Quick Reference",
+      description: "Image-based checklist for password hygiene, phishing red flags, device locking, and secure data handling.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "Information Security",
+      expiry_date: addDays(60),
+      mandatory: false,
+      visibility: "employees",
+      status: "published",
+      content_type: "image",
+      duration_minutes: 6,
+      file_name: "cybersecurity-quick-reference.png",
+      file_url: "https://images.unsplash.com/photo-1563986768494-4dee2763ff3f?auto=format&fit=crop&w=1200&q=80",
+    },
+    {
+      id: "task-link-cybersecurity-awareness",
+      title: "Cybersecurity Awareness Portal",
+      description: "Learning link with phishing simulations, secure browsing guidance, and reporting steps for suspicious emails.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "Information Security",
+      expiry_date: addDays(45),
+      mandatory: true,
+      visibility: "employees",
+      status: "published",
+      content_type: "link",
+      duration_minutes: 20,
+      link_url: "https://www.cisa.gov/secure-our-world",
+    },
+    {
+      id: "task-link-company-values",
+      title: "Company Values and Leadership Principles",
+      description: "Curated learning link for company values, leadership expectations, and responsible business practices.",
+      department: "All",
+      version: "1.0",
+      uploaded_by: "HR Learning Team",
+      expiry_date: addDays(90),
+      mandatory: false,
+      visibility: "employees",
+      status: "published",
+      content_type: "link",
+      duration_minutes: 10,
+      link_url: "https://www.tata.com/about-us/tata-values-purpose",
     },
   ],
   documentRequirements: [
@@ -570,13 +687,11 @@ function modulesForUser(state, user) {
       uploaded_by: task.uploaded_by || "HR",
       audience: task.department && task.department !== "All" ? "Department-based" : "Company-wide",
       track: task.department && task.department !== "All" ? "department" : "culture",
-      quiz_available: Boolean(task.mandatory),
-      certificate_available: Boolean(task.mandatory),
+      link_url: task.link_url || "",
       applies_to: task.department && task.department !== "All" ? task.department : "All employees",
     }));
 
-  const catalogModules = personalizedLearningCatalog(user);
-  const baseModules = [...taskModules, ...catalogModules, ...(taskModules.length > 0 ? [] : state.modules ?? [])];
+  const baseModules = taskModules;
   const progressMap = state.userModuleProgress?.[user?.id] ?? {};
   const seen = new Set();
   return baseModules
@@ -598,99 +713,6 @@ function modulesForUser(state, user) {
       ...module,
       progress: user?.id === "emp-001" && progressMap[module.id] == null ? module.progress ?? 0 : progressMap[module.id] ?? 0,
     }));
-}
-
-function personalizedLearningCatalog(user) {
-  const department = user?.department || "General";
-  const role = user?.role || user?.designation || "New Joiner";
-  const location = user?.location || "Assigned Plant";
-  const plantName = location.replace(/\s*Plant\s*/i, "").trim() || location;
-
-  return [
-    {
-      id: `dept-${department.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "general"}-orientation`,
-      title: `${department} department onboarding`,
-      category: "Department-based learning",
-      description: `Focused workflows, stakeholders, and expectations for the ${department} team.`,
-      progress: 0,
-      required: 1,
-      duration_minutes: 25,
-      content_type: "document",
-      uploaded_by: "HR Learning Team",
-      audience: "Department-based",
-      track: "department",
-      department_target: department,
-      applies_to: department,
-      quiz_available: true,
-      certificate_available: true,
-    },
-    {
-      id: `role-${role.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "new-joiner"}-essentials`,
-      title: `${role} role essentials`,
-      category: "Role-based learning",
-      description: "Role expectations, day-one deliverables, tool access, and collaboration norms.",
-      progress: 0,
-      required: 1,
-      duration_minutes: 30,
-      content_type: "document",
-      uploaded_by: "Department Manager",
-      audience: "Role-based",
-      track: "role",
-      role_target: role,
-      applies_to: role,
-      quiz_available: true,
-      certificate_available: true,
-    },
-    {
-      id: `plant-${plantName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "assigned"}-safety`,
-      title: `${location} safety briefing`,
-      category: "Plant-specific safety modules",
-      description: "Gate entry, PPE, emergency response, visitor movement, and reporting protocols.",
-      progress: 0,
-      required: 1,
-      duration_minutes: 35,
-      content_type: "document",
-      uploaded_by: "Safety Team",
-      audience: "Plant-specific",
-      track: "safety",
-      plant_target: plantName,
-      applies_to: location,
-      quiz_available: true,
-      certificate_available: true,
-    },
-    {
-      id: "company-culture-values",
-      title: "Company culture and values",
-      category: "Company culture",
-      description: "How Tata Motors teams collaborate, communicate, and make decisions.",
-      progress: 0,
-      required: 1,
-      duration_minutes: 20,
-      content_type: "document",
-      uploaded_by: "People Experience",
-      audience: "Company-wide",
-      track: "culture",
-      applies_to: "All employees",
-      quiz_available: true,
-      certificate_available: true,
-    },
-    {
-      id: "code-of-conduct-certification",
-      title: "Code of conduct certification",
-      category: "Code of conduct",
-      description: "Workplace ethics, compliance expectations, information security, and escalation paths.",
-      progress: 0,
-      required: 1,
-      duration_minutes: 30,
-      content_type: "document",
-      uploaded_by: "Compliance Team",
-      audience: "Company-wide",
-      track: "conduct",
-      applies_to: "All employees",
-      quiz_available: true,
-      certificate_available: true,
-    },
-  ];
 }
 
 function profileSectionsForUser(state, user) {
@@ -873,6 +895,7 @@ function getState() {
     const savedIds = new Set(savedItems.map((item) => item.id));
     merged[key] = [...savedItems, ...demoState[key].filter((item) => !savedIds.has(item.id))];
   }
+  merged.tasks = (merged.tasks ?? []).filter((task) => LEARNING_CONTENT_TYPES.has(task.content_type || "video"));
 
   merged.userDocuments = merged.userDocuments ?? {};
   merged.userModuleProgress = merged.userModuleProgress ?? {};
@@ -983,17 +1006,7 @@ function analyticsFromState() {
 function modulesFromHrTasks() {
   const state = getState();
   const user = currentUser();
-  const taskModules = modulesForUser(state, user);
-
-  const taskIds = new Set(taskModules.map((task) => task.id));
-  const progressMap = state.userModuleProgress?.[user?.id] ?? {};
-  const staticModules = (state.modules ?? [])
-    .filter((module) => !taskIds.has(module.id))
-    .map((module) => ({
-      ...module,
-      progress: user?.id === "emp-001" && progressMap[module.id] == null ? module.progress ?? 0 : progressMap[module.id] ?? 0,
-    }));
-  return [...taskModules, ...staticModules];
+  return modulesForUser(state, user);
 }
 
 function relocationSuggestionsFor(location) {
@@ -1508,7 +1521,6 @@ export const learningApi = {
         return { ok: true };
       }
     ),
-  submitQuiz: (data) => api.post("/api/learning/quiz-submit", data).catch(() => response({ ok: true })),
 };
 
 // Relocation
@@ -1875,7 +1887,8 @@ export const hrApi = {
           visibility: "employees",
           ...taskData,
           file_name: file?.name ?? taskData.file_name,
-          file_url: file?.name ? `local-upload://${file.name}` : taskData.file_url,
+          file_url: file ? URL.createObjectURL(file) : taskData.file_url,
+          link_url: taskData.content_type === "link" ? taskData.link_url || taskData.file_url || "" : taskData.link_url,
         };
         state.tasks.unshift(task);
         setState(state);

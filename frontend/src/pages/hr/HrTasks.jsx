@@ -9,8 +9,9 @@ const emptyForm = {
   department: "All",
   status: "published",
   mandatory: false,
-  content_type: "document",
+  content_type: "video",
   duration_minutes: 15,
+  link_url: "",
   file: null,
 };
 
@@ -70,8 +71,9 @@ export default function HrTasks() {
       department: task.department ?? "All",
       status: task.status ?? "published",
       mandatory: Boolean(task.mandatory),
-      content_type: task.content_type ?? "document",
+      content_type: task.content_type ?? "video",
       duration_minutes: task.duration_minutes ?? 15,
+      link_url: task.link_url ?? task.file_url ?? "",
       file: null,
     });
   };
@@ -133,10 +135,10 @@ export default function HrTasks() {
               <label className="space-y-2">
                 <span className="block font-medium text-gray-200">Content Type</span>
                 <select value={form.content_type} onChange={set("content_type")} className="w-full rounded-lg border border-gray-700 bg-gray-950/80 px-3.5 py-2.5 text-white outline-none">
-                  <option>document</option>
                   <option>video</option>
-                  <option>checklist</option>
-                  <option>policy</option>
+                  <option>pdf</option>
+                  <option>image</option>
+                  <option>link</option>
                 </select>
               </label>
             </div>
@@ -144,19 +146,23 @@ export default function HrTasks() {
               <input checked={form.mandatory} onChange={set("mandatory")} type="checkbox" className="h-4 w-4 accent-brand-600" />
               Mandatory for candidates
             </label>
-            <label className="block rounded-xl border border-dashed border-gray-700 bg-gray-950/60 p-4 transition hover:border-gray-500">
-              <span className="block font-medium text-gray-200">Upload</span>
-              <span className="mt-1 block text-sm text-gray-500">
-                Videos, PDFs, PNGs, images, Word documents, and other task files.
-              </span>
-              <input
-                type="file"
-                accept=".mp4,.webm,.mov,.avi,.pdf,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt"
-                className="mt-3 block w-full cursor-pointer rounded-lg border border-gray-700 bg-gray-900 text-sm text-gray-300 file:mr-4 file:border-0 file:bg-brand-700 file:px-4 file:py-2.5 file:font-semibold file:text-white hover:file:bg-brand-600"
-                onChange={(event) => setForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))}
-              />
-              {form.file ? <span className="mt-2 block text-sm text-green-300">Selected: {form.file.name}</span> : null}
-            </label>
+            {form.content_type === "link" ? (
+              <Input label="Learning Link" type="url" value={form.link_url} onChange={set("link_url")} placeholder="https://..." required />
+            ) : (
+              <label className="block rounded-xl border border-dashed border-gray-700 bg-gray-950/60 p-4 transition hover:border-gray-500">
+                <span className="block font-medium text-gray-200">Upload {form.content_type.toUpperCase()}</span>
+                <span className="mt-1 block text-sm text-gray-500">
+                  HR can publish videos, PDFs, and image files. Published content appears in Employee Learning.
+                </span>
+                <input
+                  type="file"
+                  accept={form.content_type === "video" ? ".mp4,.webm,.mov,.avi" : form.content_type === "pdf" ? ".pdf" : ".png,.jpg,.jpeg,.webp,.gif"}
+                  className="mt-3 block w-full cursor-pointer rounded-lg border border-gray-700 bg-gray-900 text-sm text-gray-300 file:mr-4 file:border-0 file:bg-brand-700 file:px-4 file:py-2.5 file:font-semibold file:text-white hover:file:bg-brand-600"
+                  onChange={(event) => setForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))}
+                />
+                {form.file ? <span className="mt-2 block text-sm text-green-300">Selected: {form.file.name}</span> : null}
+              </label>
+            )}
             <div className="flex gap-3">
               <Button type="submit" loading={saving} className="flex-1">
                 {editingId ? "Save Changes" : "Create Task"}
@@ -192,8 +198,8 @@ export default function HrTasks() {
                       </div>
                       <p className="mt-2 text-gray-400">{task.description || "No description added."}</p>
                       <p className="mt-3 text-gray-500">{task.department} · {task.content_type} · {task.duration_minutes} min</p>
-                      {task.file_name || task.file_url ? (
-                        <p className="mt-2 text-sm text-gray-400">Attachment: {task.file_name || task.file_url}</p>
+                      {task.file_name || task.file_url || task.link_url ? (
+                        <p className="mt-2 text-sm text-gray-400">Source: {task.file_name || task.link_url || task.file_url}</p>
                       ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2 lg:justify-end">

@@ -158,14 +158,6 @@ const companyMapHighlights = [
     description: "The map marks A, C, D, E, H, J, P.E., and nearby shop blocks so employees can understand the plant layout.",
     detail: "Check your reporting instructions for the exact block before moving inside the plant.",
   },
-  {
-    id: "support-facilities",
-    label: "Support Facilities",
-    short: "SUP",
-    type: "Facilities",
-    description: "The layout includes plant support areas such as canteen, utilities, stores, material gate, and maintenance zones.",
-    detail: "Use these landmarks when asking security, HR, or your buddy for directions.",
-  },
 ];
 
 const generatedResourcesFor = (location) => {

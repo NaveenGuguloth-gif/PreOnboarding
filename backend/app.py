@@ -1302,6 +1302,10 @@ class TaskUpdateData(BaseModel):
     status: Optional[str] = None
     content_type: Optional[str] = None
     duration_minutes: Optional[int] = None
+    link_url: Optional[str] = None
+
+
+LEARNING_CONTENT_TYPES = {"video", "pdf", "image", "link"}
 
 
 class RelocationSearchData(BaseModel):
@@ -1399,12 +1403,15 @@ def create_task(
     mandatory: bool = Form(False),
     visibility: str = Form("employees"),
     status: str = Form("published"),
-    content_type: str = Form("document"),
+    content_type: str = Form("video"),
     duration_minutes: int = Form(15),
+    link_url: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     user: Dict[str, Any] = Depends(_require_role("hr")),
 ):
     try:
+        if content_type not in LEARNING_CONTENT_TYPES:
+            raise HTTPException(status_code=400, detail="Learning content type must be video, pdf, image, or link.")
         task = preonboarding_repository.create_task(
             {
                 "title": title,
@@ -1418,6 +1425,7 @@ def create_task(
                 "status": status,
                 "content_type": content_type,
                 "duration_minutes": duration_minutes,
+                "link_url": link_url,
             },
             file,
         )
@@ -1429,7 +1437,10 @@ def create_task(
 @app.patch("/api/hr/tasks/{task_id}")
 def update_task(task_id: str, data: TaskUpdateData, user: Dict[str, Any] = Depends(_require_role("hr"))):
     try:
-        task = preonboarding_repository.update_task(task_id, data.dict(exclude_unset=True))
+        payload = data.dict(exclude_unset=True)
+        if payload.get("content_type") and payload["content_type"] not in LEARNING_CONTENT_TYPES:
+            raise HTTPException(status_code=400, detail="Learning content type must be video, pdf, image, or link.")
+        task = preonboarding_repository.update_task(task_id, payload)
     except RuntimeError as exc:
         _enterprise_unavailable_response(exc)
     if not task:

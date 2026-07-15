@@ -4,40 +4,43 @@ import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../../components/ui";
 import LoadingSpinner from "../../components/common/LoadingSpinner";
 
-// --- Category theming -------------------------------------------------
-// Each category gets its own accent so the board reads at a glance,
-// the way a course catalog color-codes tracks.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
+
 const CATEGORY_THEME = {
-  safety: { accent: "#EF4444", soft: "bg-rose-500/10", text: "text-rose-300", ring: "#EF4444" },
-  compliance: { accent: "#F59E0B", soft: "bg-amber-500/10", text: "text-amber-300", ring: "#F59E0B" },
-  it: { accent: "#8B5CF6", soft: "bg-violet-500/10", text: "text-violet-300", ring: "#8B5CF6" },
-  "role fit": { accent: "#06B6D4", soft: "bg-cyan-500/10", text: "text-cyan-300", ring: "#06B6D4" },
-  "department-based learning": { accent: "#2563EB", soft: "bg-blue-500/10", text: "text-blue-300", ring: "#2563EB" },
-  "role-based learning": { accent: "#7C3AED", soft: "bg-violet-500/10", text: "text-violet-300", ring: "#7C3AED" },
-  "plant-specific safety modules": { accent: "#DC2626", soft: "bg-rose-500/10", text: "text-rose-300", ring: "#DC2626" },
-  "company culture": { accent: "#059669", soft: "bg-emerald-500/10", text: "text-emerald-300", ring: "#059669" },
-  "code of conduct": { accent: "#D97706", soft: "bg-amber-500/10", text: "text-amber-300", ring: "#D97706" },
-  default: { accent: "#6366F1", soft: "bg-indigo-500/10", text: "text-indigo-300", ring: "#6366F1" },
+  safety: { accent: "#EF4444", soft: "bg-rose-500/10", text: "text-rose-300" },
+  compliance: { accent: "#F59E0B", soft: "bg-amber-500/10", text: "text-amber-300" },
+  image: { accent: "#10B981", soft: "bg-emerald-500/10", text: "text-emerald-300" },
+  link: { accent: "#06B6D4", soft: "bg-cyan-500/10", text: "text-cyan-300" },
+  pdf: { accent: "#F97316", soft: "bg-orange-500/10", text: "text-orange-300" },
+  video: { accent: "#6366F1", soft: "bg-indigo-500/10", text: "text-indigo-300" },
+  default: { accent: "#6366F1", soft: "bg-indigo-500/10", text: "text-indigo-300" },
 };
 
-const themeFor = (category) => CATEGORY_THEME[(category || "").toLowerCase()] || CATEGORY_THEME.default;
+const themeFor = (module) => {
+  const key = (module.content_type || module.category || "").toLowerCase();
+  return CATEGORY_THEME[key] || CATEGORY_THEME.default;
+};
 
-const recommendations = [
-  { label: "Priority", text: "Finish required modules before optional tool setup so your day-one access stays on track." },
-  { label: "Safety", text: "Reporting to a plant? Revisit emergency, gate, and PPE guidance before travel." },
-  { label: "IT", text: "List software, VPN, and device questions so IT can resolve them in one pass." },
-  { label: "Role fit", text: "Prioritize modules linked to your department, then use the rest to close gaps." },
-];
+const resolveUrl = (url = "") => {
+  if (!url) return "";
+  if (/^(https?:|blob:|data:)/i.test(url)) return url;
+  if (url.startsWith("/")) return `${API_BASE_URL}${url}`;
+  return url;
+};
 
-// A module is a "video" if it has a video source or an explicit type.
-// Everything else (pdf, doc, slides, links) is tracked with a manual check.
-const isVideoModule = (module) =>
-  module.type === "video" || Boolean(module.video_url) || /\.(mp4|webm|mov)$/i.test(module.file_url || "");
+const contentUrl = (module) => resolveUrl(module.video_url || module.file_url || module.link_url || "");
+const isVideo = (module) =>
+  module.content_type === "video" || Boolean(module.video_url) || /\.(mp4|webm|mov)$/i.test(module.file_url || "");
+const isImage = (module) =>
+  module.content_type === "image" || /\.(png|jpe?g|gif|webp)$/i.test(module.file_url || "");
+const isPdf = (module) => module.content_type === "pdf" || /\.pdf$/i.test(module.file_url || "");
+const isLink = (module) => module.content_type === "link" || Boolean(module.link_url);
 
 export default function Learning() {
   const { user } = useAuth();
   const [modules, setModules] = useState([]);
-  const [activeTrack, setActiveTrack] = useState("all");
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [activeVideo, setActiveVideo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
   const [error, setError] = useState("");
@@ -47,21 +50,19 @@ export default function Learning() {
     learningApi
       .listModules(candidateId)
       .then((r) => setModules(r.data?.modules ?? r.data ?? []))
-      .catch(() => {})
+      .catch(() => setError("Unable to load learning content."))
       .finally(() => setLoading(false));
 
   useEffect(() => {
     load();
   }, [candidateId]);
 
-  // Shared progress writer — used both for the "mark reviewed" checkbox
-  // and for incremental video watch-time updates.
-  const updateModuleProgress = async (moduleId, progress) => {
+  const updateProgress = async (moduleId, progress) => {
     setUpdating(moduleId);
     setError("");
     try {
       await learningApi.updateProgress({ moduleId, progress }, candidateId);
-      setModules((prev) => prev.map((m) => (m.id === moduleId ? { ...m, progress } : m)));
+      setModules((prev) => prev.map((item) => (item.id === moduleId ? { ...item, progress } : item)));
     } catch {
       setError("Failed to update progress.");
     } finally {
@@ -69,337 +70,413 @@ export default function Learning() {
     }
   };
 
+  const videos = useMemo(() => modules.filter(isVideo), [modules]);
+  const resources = useMemo(() => modules.filter((module) => !isVideo(module)), [modules]);
+  const featured = videos[0] ?? modules[0] ?? null;
+  const filteredModules = useMemo(() => {
+    if (activeFilter === "all") return modules;
+    if (activeFilter === "video") return videos;
+    return modules.filter((module) => (module.content_type || "").toLowerCase() === activeFilter);
+  }, [activeFilter, modules, videos]);
+
   const stats = useMemo(() => {
-    const completed = modules.filter((m) => (m.progress ?? 0) >= 100).length;
-    const required = modules.filter((m) => Boolean(m.required)).length;
+    const completed = modules.filter((module) => (module.progress ?? 0) >= 100).length;
     const average = modules.length
-      ? Math.round(modules.reduce((sum, m) => sum + (m.progress ?? 0), 0) / modules.length)
+      ? Math.round(modules.reduce((sum, module) => sum + (module.progress ?? 0), 0) / modules.length)
       : 0;
-    const certificates = modules.filter((m) => m.certificate_available && (m.progress ?? 0) >= 100).length;
-    const quizzes = modules.filter((m) => m.quiz_available).length;
-    return { completed, required, average, certificates, quizzes };
+    return { completed, average };
   }, [modules]);
-
-  const trackTabs = useMemo(() => {
-    const tracks = [
-      { id: "all", label: "All assigned" },
-      { id: "department", label: "Department" },
-      { id: "role", label: "Role" },
-      { id: "safety", label: "Plant safety" },
-      { id: "culture", label: "Culture" },
-      { id: "conduct", label: "Conduct" },
-    ];
-    return tracks.filter((track) => track.id === "all" || modules.some((module) => module.track === track.id));
-  }, [modules]);
-
-  const filteredModules = useMemo(
-    () => activeTrack === "all" ? modules : modules.filter((module) => module.track === activeTrack),
-    [activeTrack, modules]
-  );
 
   if (loading) return <LoadingSpinner />;
 
   return (
     <div className="w-full space-y-8">
-      {/* Header with overall progress ring — the one signature element */}
-      <div className="flex flex-col gap-6 rounded-2xl bg-gradient-to-br from-indigo-950 via-gray-900 to-gray-900 p-6 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Personalized Learning Hub</p>
-          <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Assigned for your department, role, and plant</h2>
-          <p className="mt-1 text-sm text-gray-400">
-            {stats.completed}/{modules.length} completed · {stats.required} required · {stats.quizzes} quizzes · {stats.certificates} certificates earned
-          </p>
+      {error ? (
+        <div className="rounded-lg border border-rose-800 bg-rose-950/60 px-4 py-3 text-sm text-rose-300">
+          {error}
         </div>
-        <ProgressRing percent={stats.average} />
-      </div>
+      ) : null}
 
-      <section className="grid gap-3 md:grid-cols-4">
-        <HubStat label="Department-based" value={modules.filter((m) => m.track === "department").length} />
-        <HubStat label="Role-based" value={modules.filter((m) => m.track === "role").length} />
-        <HubStat label="Plant safety" value={modules.filter((m) => m.track === "safety").length} />
-        <HubStat label="Certificates" value={stats.certificates} />
-      </section>
+      {featured ? (
+        <HeroModule
+          module={featured}
+          progress={stats.average}
+          total={modules.length}
+          completed={stats.completed}
+          onWatch={() => (isVideo(featured) ? setActiveVideo(featured) : openResource(featured, updateProgress))}
+        />
+      ) : (
+        <div className="rounded-2xl border border-gray-800 bg-gray-900 p-8 text-gray-400">
+          No learning content has been published by HR yet.
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
-        {trackTabs.map((track) => (
+        {[
+          ["all", "All"],
+          ["video", "Videos"],
+          ["pdf", "PDFs"],
+          ["image", "Images"],
+          ["link", "Links"],
+        ].map(([id, label]) => (
           <button
-            key={track.id}
+            key={id}
             type="button"
-            onClick={() => setActiveTrack(track.id)}
+            onClick={() => setActiveFilter(id)}
             className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
-              activeTrack === track.id
+              activeFilter === id
                 ? "border-indigo-600 bg-indigo-600 text-white"
                 : "border-gray-800 bg-gray-950/60 text-gray-400 hover:text-white"
             }`}
           >
-            {track.label}
+            {label}
           </button>
         ))}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-rose-800 bg-rose-950/60 px-4 py-3 text-sm text-rose-300">
-          {error}
-        </div>
-      )}
+      <ContentRow
+        title="Continue learning"
+        modules={filteredModules}
+        updating={updating}
+        onWatch={(module) => setActiveVideo(module)}
+        onOpen={(module) => openResource(module, updateProgress)}
+      />
 
-      {filteredModules.length === 0 ? (
-        <p className="text-sm text-gray-500">No learning modules yet.</p>
-      ) : (
-        <section className="grid max-h-[72vh] gap-4 overflow-y-auto pr-1 md:grid-cols-2 2xl:grid-cols-3">
-          {filteredModules.map((module) =>
-            isVideoModule(module) ? (
-              <VideoModuleCard
-                key={module.id}
-                module={module}
-                updating={updating === module.id}
-                onProgress={(pct) => updateModuleProgress(module.id, pct)}
-              />
-            ) : (
-              <DocModuleCard
-                key={module.id}
-                module={module}
-                updating={updating === module.id}
-                onToggleComplete={() => updateModuleProgress(module.id, 100)}
-                onQuizComplete={() => updateModuleProgress(module.id, 100)}
-              />
-            )
-          )}
-        </section>
-      )}
+      {resources.length ? (
+        <ContentRow
+          title="Reference library"
+          modules={resources}
+          updating={updating}
+          onWatch={(module) => setActiveVideo(module)}
+          onOpen={(module) => openResource(module, updateProgress)}
+        />
+      ) : null}
 
-      <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-6">
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-white">Suggested next</h3>
-          <Badge color="blue">Personalized</Badge>
+      {activeVideo ? (
+        <StreamingPlayer
+          module={activeVideo}
+          related={videos.filter((module) => module.id !== activeVideo.id)}
+          updating={updating === activeVideo.id}
+          onClose={() => setActiveVideo(null)}
+          onProgress={(progress) => updateProgress(activeVideo.id, progress)}
+          onSelectRelated={(module) => setActiveVideo(module)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function HeroModule({ module, progress, total, completed, onWatch }) {
+  const theme = themeFor(module);
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-gray-800 bg-gray-950">
+      <div className="absolute inset-0 opacity-40">
+        <Thumbnail module={module} className="h-full w-full" />
+      </div>
+      <div className="absolute inset-0 bg-gradient-to-r from-gray-950 via-gray-950/85 to-gray-950/20" />
+      <div className="relative grid min-h-[360px] items-end gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_220px] lg:p-8">
+        <div className="max-w-3xl">
+          <span className={`inline-flex rounded-full border border-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide ${theme.text} ${theme.soft}`}>
+            {module.content_type || "Learning"}
+          </span>
+          <h2 className="mt-4 text-3xl font-bold tracking-tight text-white sm:text-4xl">{module.title}</h2>
+          {module.description ? <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-300">{module.description}</p> : null}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onWatch}
+              className="rounded-lg bg-white px-5 py-3 text-sm font-bold text-gray-950 transition hover:bg-gray-200"
+            >
+              {isVideo(module) ? "Watch" : "Open"}
+            </button>
+            {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+            <span className="text-sm text-gray-400">{module.duration_minutes ?? 15} min</span>
+          </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {recommendations.map((item) => {
-            const theme = themeFor(item.label);
-            return (
-              <div key={item.text} className={`rounded-xl border border-gray-800 p-4 ${theme.soft}`}>
-                <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>{item.label}</span>
-                <p className="mt-2 text-sm leading-6 text-gray-300">{item.text}</p>
-              </div>
-            );
-          })}
+        <div className="rounded-xl border border-gray-800 bg-gray-950/80 p-4">
+          <p className="text-sm text-gray-400">Learning progress</p>
+          <strong className="mt-2 block text-3xl text-white">{progress}%</strong>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-800">
+            <div className="h-full rounded-full bg-indigo-500" style={{ width: `${progress}%` }} />
+          </div>
+          <p className="mt-3 text-xs text-gray-500">{completed}/{total} completed</p>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-function HubStat({ label, value }) {
+function ContentRow({ title, modules, updating, onWatch, onOpen }) {
+  if (!modules.length) return null;
   return (
-    <div className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-      <p className="text-sm text-gray-400">{label}</p>
-      <strong className="mt-2 block text-2xl font-semibold text-white">{value}</strong>
-    </div>
+    <section className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold text-white">{title}</h3>
+        <span className="text-sm text-gray-500">{modules.length} items</span>
+      </div>
+      <div className="flex gap-4 overflow-x-auto pb-3">
+        {modules.map((module) => (
+          <LearningCard
+            key={module.id}
+            module={module}
+            updating={updating === module.id}
+            onWatch={() => onWatch(module)}
+            onOpen={() => onOpen(module)}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
-// --- Overall progress ring ---------------------------------------------
-function ProgressRing({ percent }) {
-  const radius = 34;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (Math.min(100, percent) / 100) * circumference;
-
+function LearningCard({ module, updating, onWatch, onOpen }) {
+  const theme = themeFor(module);
+  const complete = (module.progress ?? 0) >= 100;
   return (
-    <div className="relative grid h-24 w-24 shrink-0 place-items-center">
-      <svg className="h-24 w-24 -rotate-90" viewBox="0 0 80 80">
-        <circle cx="40" cy="40" r={radius} fill="none" stroke="#1F2937" strokeWidth="8" />
-        <circle
-          cx="40"
-          cy="40"
-          r={radius}
-          fill="none"
-          stroke="url(#ringGradient)"
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 700ms ease" }}
-        />
-        <defs>
-          <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#6366F1" />
-            <stop offset="100%" stopColor="#06B6D4" />
-          </linearGradient>
-        </defs>
-      </svg>
-      <span className="absolute text-lg font-bold text-white">{percent}%</span>
+    <article className="w-[260px] shrink-0 overflow-hidden rounded-xl border border-gray-800 bg-gray-900 transition hover:-translate-y-1 hover:border-gray-700">
+      <div className="relative aspect-video bg-gray-950">
+        <Thumbnail module={module} className="h-full w-full" />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent p-3">
+          <button
+            type="button"
+            onClick={isVideo(module) ? onWatch : onOpen}
+            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-gray-950 transition hover:bg-gray-200"
+          >
+            {isVideo(module) ? "Watch" : "Open"}
+          </button>
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>{module.content_type || "Learning"}</span>
+          {complete ? <Badge color="green">Done</Badge> : module.required ? <Badge color="blue">Required</Badge> : null}
+        </div>
+        <div>
+          <h4 className="line-clamp-2 text-sm font-semibold text-white">{module.title}</h4>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">{module.description || "HR-published learning content."}</p>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-gray-800">
+          <div className="h-full rounded-full" style={{ width: `${module.progress ?? 0}%`, backgroundColor: theme.accent }} />
+        </div>
+        {updating ? <p className="text-xs text-gray-500">Saving...</p> : null}
+      </div>
+    </article>
+  );
+}
+
+function Thumbnail({ module, className = "" }) {
+  if (isImage(module) && contentUrl(module)) {
+    return <img src={contentUrl(module)} alt="" className={`object-cover ${className}`} />;
+  }
+
+  if (isVideo(module) && contentUrl(module)) {
+    return (
+      <video
+        src={contentUrl(module)}
+        muted
+        preload="metadata"
+        className={`object-cover ${className}`}
+      />
+    );
+  }
+
+  const label = isPdf(module) ? "PDF" : isLink(module) ? "LINK" : "LEARN";
+  return (
+    <div className={`grid place-items-center bg-gradient-to-br from-gray-800 to-gray-950 ${className}`}>
+      <span className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold tracking-widest text-gray-300">{label}</span>
     </div>
   );
 }
 
-// --- Video module: progress is driven by actual watch time -------------
-function VideoModuleCard({ module, onProgress, updating }) {
+function StreamingPlayer({ module, related, updating, onClose, onProgress, onSelectRelated }) {
   const videoRef = useRef(null);
+  const playerRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(0.85);
+  const [speed, setSpeed] = useState(1);
   const [watchPercent, setWatchPercent] = useState(module.progress ?? 0);
   const lastSentRef = useRef(module.progress ?? 0);
-  const theme = themeFor(module.category);
-  const isComplete = watchPercent >= 100;
 
-  const handleTimeUpdate = () => {
-    const el = videoRef.current;
-    if (!el || !el.duration) return;
-    // Progress only ever moves forward — skipping ahead doesn't count as watching.
-    const percent = Math.min(100, Math.round((el.currentTime / el.duration) * 100));
-    setWatchPercent((prev) => Math.max(prev, percent));
-  };
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setWatchPercent(module.progress ?? 0);
+    lastSentRef.current = module.progress ?? 0;
+  }, [module.id, module.progress]);
 
-  const flushProgress = () => {
-    const finalPercent = watchPercent >= 95 ? 100 : watchPercent;
+  const flushProgress = (value = watchPercent) => {
+    const finalPercent = value >= 95 ? 100 : value;
     if (finalPercent !== lastSentRef.current) {
       lastSentRef.current = finalPercent;
       onProgress(finalPercent);
     }
   };
 
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) el.play().then(() => setPlaying(true)).catch(() => {});
+    else {
+      el.pause();
+      setPlaying(false);
+    }
+  };
+
+  const seek = (value) => {
+    const el = videoRef.current;
+    if (!el || !el.duration) return;
+    el.currentTime = (Number(value) / 100) * el.duration;
+  };
+
+  const skip = (seconds) => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = Math.min(Math.max(0, el.currentTime + seconds), el.duration || el.currentTime + seconds);
+  };
+
+  const updateVolume = (value) => {
+    const next = Number(value);
+    setVolume(next);
+    if (videoRef.current) videoRef.current.volume = next;
+  };
+
+  const updateSpeed = (value) => {
+    const next = Number(value);
+    setSpeed(next);
+    if (videoRef.current) videoRef.current.playbackRate = next;
+  };
+
+  const fullscreen = () => {
+    if (playerRef.current?.requestFullscreen) playerRef.current.requestFullscreen();
+  };
+
   return (
-    <div
-      className="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900"
-      style={{ borderTopColor: theme.accent, borderTopWidth: 3 }}
-    >
-      <div className="relative aspect-video bg-black">
-        {module.video_url || module.file_url ? (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/90 px-4 py-6 backdrop-blur sm:py-10">
+      <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl">
+        <div ref={playerRef} className="relative mx-auto bg-black">
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 z-10 rounded-full bg-black/70 px-3 py-2 text-sm font-bold text-white hover:bg-black"
+            aria-label="Close player"
+          >
+            Close
+          </button>
           <video
             ref={videoRef}
-            className="h-full w-full"
-            src={module.video_url || module.file_url}
-            controls
-            onTimeUpdate={handleTimeUpdate}
-            onPause={flushProgress}
-            onEnded={flushProgress}
+            src={contentUrl(module)}
+            className="mx-auto aspect-video max-h-[56vh] w-full bg-black object-contain"
+            onLoadedMetadata={(event) => {
+              setDuration(event.currentTarget.duration || 0);
+              event.currentTarget.volume = volume;
+              event.currentTarget.playbackRate = speed;
+            }}
+            onTimeUpdate={(event) => {
+              const el = event.currentTarget;
+              setCurrentTime(el.currentTime);
+              setDuration(el.duration || 0);
+              const pct = el.duration ? Math.min(100, Math.round((el.currentTime / el.duration) * 100)) : 0;
+              setWatchPercent((prev) => Math.max(prev, pct));
+            }}
+            onPlay={() => setPlaying(true)}
+            onPause={() => {
+              setPlaying(false);
+              flushProgress();
+            }}
+            onEnded={() => {
+              setPlaying(false);
+              setWatchPercent(100);
+              flushProgress(100);
+            }}
           />
-        ) : (
-          <div className="grid h-full place-items-center text-sm text-gray-500">No video available</div>
-        )}
-      </div>
-
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>
-            {module.category || "Video"}
-          </span>
-          <div className="flex flex-wrap justify-end gap-2">
-            {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
-            {module.audience ? <Badge color="gray">{module.audience}</Badge> : null}
-          </div>
-        </div>
-        <h3 className="mt-2 text-base font-semibold text-white">{module.title}</h3>
-        {module.description ? (
-          <p className="mt-1 text-sm leading-6 text-gray-400">{module.description}</p>
-        ) : null}
-
-        <div className="mt-4 flex items-center gap-3">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-800">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${watchPercent}%`, backgroundColor: theme.accent }}
+          <div className="space-y-3 border-t border-gray-900 bg-gray-950 p-3 sm:p-4">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={duration ? Math.round((currentTime / duration) * 100) : 0}
+              onChange={(event) => seek(event.target.value)}
+              className="w-full accent-indigo-500"
+              aria-label="Video progress"
             />
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-gray-300">
+              <button type="button" onClick={togglePlay} className="h-10 rounded-lg bg-white px-4 font-bold text-gray-950">
+                {playing ? "Pause" : "Play"}
+              </button>
+              <button type="button" onClick={() => skip(-10)} className="h-10 rounded-lg border border-gray-700 px-3 font-semibold">-10s</button>
+              <button type="button" onClick={() => skip(10)} className="h-10 rounded-lg border border-gray-700 px-3 font-semibold">+10s</button>
+              <span className="min-w-28 text-gray-400">{formatTime(currentTime)} / {formatTime(duration)}</span>
+              <label className="flex items-center gap-2">
+                <span>Volume</span>
+                <input type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => updateVolume(event.target.value)} className="w-24 accent-indigo-500" />
+              </label>
+              <select value={speed} onChange={(event) => updateSpeed(event.target.value)} className="h-10 rounded-lg border border-gray-700 bg-gray-950 px-2 text-white">
+                {[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}x</option>)}
+              </select>
+              <button type="button" onClick={fullscreen} className="h-10 rounded-lg border border-gray-700 px-3 font-semibold">Fullscreen</button>
+              {updating ? <span className="text-xs text-gray-500">Saving...</span> : null}
+            </div>
           </div>
-          <span className="w-10 shrink-0 text-right text-xs font-semibold text-gray-400">{watchPercent}%</span>
         </div>
 
-        <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs text-gray-500">Tracked by watch time</span>
-          {isComplete ? (
-            <Badge color="green">Watched</Badge>
-          ) : updating ? (
-            <span className="text-xs text-gray-500">Saving…</span>
-          ) : null}
-        </div>
-        {module.certificate_available ? (
-          <div className="mt-3">
-            <span className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isComplete ? "border-emerald-700 bg-emerald-50 text-emerald-700" : "border-gray-800 text-gray-500"}`}>
-              {isComplete ? "Certificate earned" : "Certificate after completion"}
-            </span>
+        <div className="space-y-6 p-4 sm:p-5">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-2xl font-bold text-white">{module.title}</h3>
+              {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
+            </div>
+            {module.description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-400">{module.description}</p> : null}
+            <div className="mt-4 flex items-center gap-3">
+              <div className="h-2 max-w-sm flex-1 overflow-hidden rounded-full bg-gray-800">
+                <div className="h-full rounded-full bg-indigo-500" style={{ width: `${watchPercent}%` }} />
+              </div>
+              <span className="text-xs font-semibold text-gray-400">{watchPercent}% watched</span>
+            </div>
           </div>
-        ) : null}
+
+          <section>
+            <h4 className="text-lg font-semibold text-white">Related learning videos</h4>
+            {related.length ? (
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                {related.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectRelated(item)}
+                    className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900 text-left transition hover:-translate-y-1 hover:border-gray-700"
+                  >
+                    <div className="aspect-video bg-gray-950">
+                      <Thumbnail module={item} className="h-full w-full" />
+                    </div>
+                    <div className="p-3">
+                      <h5 className="line-clamp-2 text-sm font-semibold text-white">{item.title}</h5>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">{item.description || "HR-published learning video."}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-gray-500">No other HR-published videos are available yet.</p>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
 }
 
-// --- Document / PDF module: manual "mark as reviewed" checkbox ---------
-function DocModuleCard({ module, onQuizComplete, onToggleComplete, updating }) {
-  const theme = themeFor(module.category);
-  const isComplete = (module.progress ?? 0) >= 100;
+function openResource(module, updateProgress) {
+  const url = contentUrl(module);
+  if (url) window.open(url, "_blank", "noreferrer");
+  updateProgress(module.id, 100);
+}
 
-  return (
-    <div
-      className="flex items-start gap-4 rounded-2xl border border-gray-800 bg-gray-900 p-4"
-      style={{ borderLeftColor: theme.accent, borderLeftWidth: 4 }}
-    >
-      <button
-        type="button"
-        role="checkbox"
-        aria-checked={isComplete}
-        disabled={isComplete || updating}
-        onClick={onToggleComplete}
-        className={`mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 transition-colors ${
-          isComplete
-            ? "border-emerald-500 bg-emerald-500"
-            : "border-gray-600 bg-transparent hover:border-gray-400"
-        }`}
-      >
-        {isComplete ? (
-          <svg viewBox="0 0 16 16" className="h-4 w-4 fill-white">
-            <path d="M6.5 11.5 3 8l1.06-1.06 2.44 2.44 5.44-5.44L13 5 6.5 11.5z" />
-          </svg>
-        ) : null}
-      </button>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-3">
-          <span className={`text-xs font-semibold uppercase tracking-wide ${theme.text}`}>
-            {module.category || "Document"}
-          </span>
-          <div className="flex flex-wrap justify-end gap-2">
-            {module.required ? <Badge color="blue">Required</Badge> : <Badge color="gray">Optional</Badge>}
-            {module.audience ? <Badge color="gray">{module.audience}</Badge> : null}
-          </div>
-        </div>
-        <h3 className="mt-2 text-base font-semibold text-white">{module.title}</h3>
-        {module.description ? (
-          <p className="mt-1 text-sm leading-6 text-gray-400">{module.description}</p>
-        ) : null}
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          {module.file_url ? (
-            <a
-              className="text-sm font-medium text-indigo-400 hover:text-indigo-300"
-              href={module.file_url}
-              rel="noreferrer"
-              target="_blank"
-            >
-              Open document
-            </a>
-          ) : null}
-          <span className="text-xs text-gray-500">
-            {isComplete ? "Marked reviewed" : updating ? "Saving…" : "Check the box once reviewed"}
-          </span>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {module.quiz_available ? (
-            <button
-              type="button"
-              disabled={isComplete || updating}
-              onClick={onQuizComplete}
-              className="rounded-lg border border-gray-800 px-3 py-2 text-sm font-semibold text-gray-300 transition hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isComplete ? "Quiz passed" : "Take quiz"}
-            </button>
-          ) : null}
-          {module.certificate_available ? (
-            <span className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isComplete ? "border-emerald-700 bg-emerald-50 text-emerald-700" : "border-gray-800 text-gray-500"}`}>
-              {isComplete ? "Certificate earned" : "Certificate after completion"}
-            </span>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60).toString().padStart(2, "0");
+  return `${mins}:${secs}`;
 }
